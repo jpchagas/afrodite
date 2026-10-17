@@ -46,7 +46,6 @@ import {
   formatTime,
   formatRelativeLabel,
   monthPrefix,
-  monthName,
   addMinutesToTime
 } from './dates.js'
 
@@ -163,12 +162,14 @@ export async function getDashboardSummary() {
     list(query(collection(db, 'appointments'), where('dateKey', '==', todayKey()))),
     list(query(collection(db, 'leads'), where('createdAt', '>=', since))),
     list(query(collection(db, 'leads'), where('status', '==', 'Proposta'))),
-    list(query(collection(db, 'payments'), where('status', '==', 'Pago'))),
+    list(query(collection(db, 'transactions'), where('monthKey', 'in', [monthPrefix(0), monthPrefix(-1)]))),
     list(collection(db, 'patients'))
   ])
 
   const revenueOf = (prefix) =>
-    payments.filter((p) => p.date?.startsWith(prefix)).reduce((sum, p) => sum + p.amount, 0)
+    payments
+      .filter((t) => t.type === 'receita' && t.status === 'Pago' && t.monthKey === prefix)
+      .reduce((sum, t) => sum + t.amount, 0)
   const monthRevenue = revenueOf(monthPrefix(0))
   const previousRevenue = revenueOf(monthPrefix(-1))
 
@@ -497,52 +498,295 @@ export async function updateAppointmentStatus(id, status) {
 }
 
 // ---- Financeiro ----
+// Coleção única `transactions` para receitas e despesas. Datas: `dueDate`
+// (vencimento) e `paidDate` (pagamento), ambas 'YYYY-MM-DD'. `monthKey`
+// ('YYYY-MM') = mês do pagamento, ou do vencimento enquanto pendente — é
+// por ele que o financeiro é navegado mês a mês (regime de caixa).
 
-function toPayment(p) {
-  return { ...p, dateKey: p.date, date: formatDateKey(p.date) }
+export const INCOME_CATEGORIES = ['Procedimento', 'Consulta', 'Pacote', 'Produto', 'Outro']
+export const EXPENSE_CATEGORIES = [
+  'Insumos',
+  'Aluguel',
+  'Salários',
+  'Comissões',
+  'Marketing',
+  'Impostos',
+  'Equipamentos',
+  'Contas e serviços',
+  'Outro'
+]
+export const PAYMENT_METHODS = ['Pix', 'Cartão de crédito', 'Cartão de débito', 'Dinheiro', 'Boleto', 'Transferência']
+const DEFAULT_COMMISSION_RATES = { Procedimento: 30, Pacote: 25, Consulta: 0, Produto: 10, Outro: 0 }
+
+const pad2 = (n) => String(n).padStart(2, '0')
+
+export function currentMonthKey() {
+  return todayKey().slice(0, 7)
 }
 
-export async function getFinanceSummary() {
-  const payments = await list(collection(db, 'payments'))
-  const prefix = monthPrefix(0)
-  const paidThisMonth = payments.filter((p) => p.status === 'Pago' && p.date?.startsWith(prefix))
-  const pending = payments.filter((p) => p.status === 'Pendente')
+export function addMonths(monthKey, n) {
+  const [y, m] = monthKey.split('-').map(Number)
+  const d = new Date(y, m - 1 + n, 1)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
+}
+
+export function formatMonth(monthKey, { short = false } = {}) {
+  const [y, m] = monthKey.split('-').map(Number)
+  const d = new Date(y, m - 1, 1)
+  if (short) return d.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')
+  const label = d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+// Mesmo dia em outro mês, limitado ao último dia (31/01 + 1 mês = 28/02)
+function addMonthsToDateKey(key, n) {
+  const [y, m, d] = key.split('-').map(Number)
+  const last = new Date(y, m - 1 + n + 1, 0).getDate()
+  const date = new Date(y, m - 1 + n, Math.min(d, last))
+  return toDateKey(date)
+}
+
+function toTransaction(t) {
+  const overdue = t.status === 'Pendente' && t.dueDate && t.dueDate < todayKey()
   return {
-    totalFaturado: paidThisMonth.reduce((sum, p) => sum + p.amount, 0),
-    monthLabel: monthName(0),
-    aReceber: pending.reduce((sum, p) => sum + p.amount, 0),
-    aReceberClientes: new Set(pending.map((p) => p.patientId || p.patientName)).size
+    ...t,
+    displayStatus: overdue ? 'Atrasado' : t.status,
+    overdue,
+    effectiveDate: t.paidDate || t.dueDate,
+    signedAmount: t.type === 'despesa' ? -t.amount : t.amount
   }
 }
 
-// Últimos lançamentos = pagamentos recebidos mais recentes
-export async function getFinanceLaunches(limitCount = 5) {
-  const paid = await list(query(collection(db, 'payments'), where('status', '==', 'Pago')))
-  return paid
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    .slice(0, limitCount)
-    .map((p) => ({ ...toPayment(p), name: p.procedure }))
+const byEffectiveDateDesc = (a, b) => (b.effectiveDate || '').localeCompare(a.effectiveDate || '')
+
+export async function getMonthTransactions(monthKey) {
+  const items = await list(query(collection(db, 'transactions'), where('monthKey', '==', monthKey)))
+  return items.map(toTransaction).sort(byEffectiveDateDesc)
 }
 
-export async function getFinancePayments() {
-  const payments = await list(collection(db, 'payments'))
-  // Pendentes primeiro, depois por data mais recente
-  return payments
-    .sort((a, b) => {
-      if (a.status !== b.status) return a.status === 'Pendente' ? -1 : 1
-      return (b.date || '').localeCompare(a.date || '')
-    })
-    .map(toPayment)
+export async function getPatientTransactions(patientId) {
+  const items = (await list(query(collection(db, 'transactions'), where('patientId', '==', patientId))))
+    .map(toTransaction)
+    .sort(byEffectiveDateDesc)
+  const sum = (arr) => arr.reduce((s, t) => s + t.amount, 0)
+  const income = items.filter((t) => t.type === 'receita')
+  return {
+    items,
+    paid: sum(income.filter((t) => t.status === 'Pago')),
+    pending: sum(income.filter((t) => t.status === 'Pendente')),
+    overdue: sum(income.filter((t) => t.overdue))
+  }
 }
 
-export async function getFinanceCommissions() {
-  const commissions = await list(
-    query(collection(db, 'commissions'), orderBy('date', 'desc'))
+export async function getAppointmentTransactions(appointmentId) {
+  const items = await list(query(collection(db, 'transactions'), where('appointmentId', '==', appointmentId)))
+  return items.map(toTransaction).sort(byEffectiveDateDesc)
+}
+
+/**
+ * Visão do mês: saldo (receitas − despesas pagas), a receber / a pagar
+ * (todas as pendências, de qualquer mês), atrasados e série dos últimos
+ * 6 meses para o gráfico.
+ */
+export async function getFinanceOverview(monthKey) {
+  const firstMonth = addMonths(monthKey, -5)
+  const [monthItems, pendingItems, rangeItems] = await Promise.all([
+    getMonthTransactions(monthKey),
+    list(query(collection(db, 'transactions'), where('status', '==', 'Pendente'))),
+    list(
+      query(collection(db, 'transactions'), where('monthKey', '>=', firstMonth), where('monthKey', '<=', monthKey))
+    )
+  ])
+  const sum = (arr) => arr.reduce((s, t) => s + t.amount, 0)
+  const paid = monthItems.filter((t) => t.status === 'Pago')
+  const income = sum(paid.filter((t) => t.type === 'receita'))
+  const expense = sum(paid.filter((t) => t.type === 'despesa'))
+
+  const pending = pendingItems.map(toTransaction)
+  const summarize = (type) => {
+    const items = pending.filter((t) => t.type === type)
+    const overdue = items.filter((t) => t.overdue)
+    return { total: sum(items), count: items.length, overdueTotal: sum(overdue), overdueCount: overdue.length }
+  }
+
+  const series = Array.from({ length: 6 }).map((_, i) => {
+    const key = addMonths(firstMonth, i)
+    const items = rangeItems.filter((t) => t.monthKey === key && t.status === 'Pago')
+    return {
+      monthKey: key,
+      label: formatMonth(key, { short: true }),
+      income: sum(items.filter((t) => t.type === 'receita')),
+      expense: sum(items.filter((t) => t.type === 'despesa'))
+    }
+  })
+
+  const expenseByCategory = Object.entries(
+    paid
+      .filter((t) => t.type === 'despesa')
+      .reduce((acc, t) => ({ ...acc, [t.category]: (acc[t.category] || 0) + t.amount }), {})
   )
-  const prefix = monthPrefix(0)
-  return commissions
-    .filter((c) => c.date?.startsWith(prefix))
-    .map((c) => ({ ...c, value: Math.round((c.base * c.pct) / 100) }))
+    .map(([category, total]) => ({ category, total }))
+    .sort((a, b) => b.total - a.total)
+
+  return {
+    monthKey,
+    monthLabel: formatMonth(monthKey),
+    income,
+    expense,
+    balance: income - expense,
+    toReceiveThisMonth: sum(monthItems.filter((t) => t.type === 'receita' && t.status === 'Pendente')),
+    receivable: summarize('receita'),
+    payable: summarize('despesa'),
+    overdueReceivables: pending
+      .filter((t) => t.type === 'receita' && t.overdue)
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+      .slice(0, 5),
+    expenseByCategory,
+    series
+  }
+}
+
+/**
+ * Cria um lançamento. Com `installments` > 1, gera uma parcela por mês
+ * (valor dividido em centavos, diferença na última) ligadas por `groupId`.
+ * `paid` marca como pago na criação (só a 1ª parcela, se parcelado).
+ */
+export async function createTransaction({
+  type,
+  description,
+  category,
+  amount,
+  dueDate,
+  paid = false,
+  paidDate,
+  method,
+  patientId = null,
+  patientName = null,
+  appointmentId = null,
+  installments = 1,
+  notes = ''
+}) {
+  const total = Math.round(Number(amount) * 100)
+  if (!total || total < 0) throw new Error('Informe um valor válido.')
+  const n = Math.max(1, Math.min(24, Number(installments) || 1))
+  const base = Math.floor(total / n)
+  const groupRef = n > 1 ? doc(collection(db, 'transactions')) : null
+  const batch = writeBatch(db)
+  const created = []
+  for (let i = 0; i < n; i++) {
+    const cents = i === n - 1 ? total - base * (n - 1) : base
+    const due = addMonthsToDateKey(dueDate || todayKey(), i)
+    const isPaid = paid && i === 0
+    const pDate = isPaid ? paidDate || todayKey() : null
+    const ref = doc(collection(db, 'transactions'))
+    const data = {
+      type,
+      description: n > 1 ? `${description.trim()} (${i + 1}/${n})` : description.trim(),
+      category: category || 'Outro',
+      amount: cents / 100,
+      dueDate: due,
+      paidDate: pDate,
+      status: isPaid ? 'Pago' : 'Pendente',
+      method: method || null,
+      monthKey: (pDate || due).slice(0, 7),
+      patientId,
+      patientName,
+      appointmentId,
+      groupId: groupRef?.id || null,
+      installment: n > 1 ? { n: i + 1, total: n } : null,
+      notes: notes.trim(),
+      createdBy: currentUid(),
+      createdAt: serverTimestamp()
+    }
+    batch.set(ref, data)
+    created.push(toTransaction({ id: ref.id, ...data }))
+  }
+  await batch.commit()
+  return created
+}
+
+const TRANSACTION_EDITABLE = ['description', 'category', 'amount', 'dueDate', 'method', 'notes']
+
+export async function updateTransaction(id, fields) {
+  const current = await getOrThrow(doc(db, 'transactions', id), 'Lançamento não encontrado')
+  const changes = pick(fields, TRANSACTION_EDITABLE)
+  if ('amount' in changes) {
+    changes.amount = Math.round(Number(changes.amount) * 100) / 100
+    if (!changes.amount || changes.amount < 0) throw new Error('Informe um valor válido.')
+  }
+  if ('description' in changes) changes.description = changes.description.trim()
+  const next = { ...current, ...changes }
+  changes.monthKey = (next.paidDate || next.dueDate).slice(0, 7)
+  await updateDoc(doc(db, 'transactions', id), { ...changes, updatedAt: serverTimestamp() })
+  return toTransaction({ ...next, ...changes })
+}
+
+export async function markTransactionPaid(id, { paidDate, method } = {}) {
+  const current = await getOrThrow(doc(db, 'transactions', id), 'Lançamento não encontrado')
+  const date = paidDate || todayKey()
+  const changes = { status: 'Pago', paidDate: date, method: method || current.method || null, monthKey: date.slice(0, 7) }
+  await updateDoc(doc(db, 'transactions', id), { ...changes, updatedAt: serverTimestamp() })
+  return toTransaction({ ...current, ...changes })
+}
+
+export async function markTransactionPending(id) {
+  const current = await getOrThrow(doc(db, 'transactions', id), 'Lançamento não encontrado')
+  const changes = { status: 'Pendente', paidDate: null, monthKey: current.dueDate.slice(0, 7) }
+  await updateDoc(doc(db, 'transactions', id), { ...changes, updatedAt: serverTimestamp() })
+  return toTransaction({ ...current, ...changes })
+}
+
+export async function deleteTransaction(id) {
+  await deleteDoc(doc(db, 'transactions', id))
+}
+
+// ---- Comissões (calculadas sobre receitas pagas no mês) ----
+
+export async function getCommissionRates() {
+  const snap = await getDoc(doc(db, 'settings', 'finance'))
+  return { ...DEFAULT_COMMISSION_RATES, ...(snap.exists() ? snap.data().commissionRates : {}) }
+}
+
+export async function updateCommissionRates(rates) {
+  const clean = Object.fromEntries(
+    Object.entries(rates).map(([k, v]) => [k, Math.max(0, Math.min(100, Number(v) || 0))])
+  )
+  await setDoc(doc(db, 'settings', 'finance'), { commissionRates: clean, updatedAt: serverTimestamp() }, { merge: true })
+  return clean
+}
+
+export async function getCommissions(monthKey) {
+  const [items, rates] = await Promise.all([getMonthTransactions(monthKey), getCommissionRates()])
+  const paidIncome = items.filter((t) => t.type === 'receita' && t.status === 'Pago')
+  const rows = INCOME_CATEGORIES.map((category) => {
+    const base = paidIncome.filter((t) => t.category === category).reduce((s, t) => s + t.amount, 0)
+    const pct = rates[category] || 0
+    return { category, base, pct, value: Math.round(base * pct) / 100, count: paidIncome.filter((t) => t.category === category).length }
+  }).filter((r) => r.base > 0)
+  return { rows, rates, total: rows.reduce((s, r) => s + r.value, 0) }
+}
+
+// ---- Exportação ----
+
+// CSV com ";" e vírgula decimal (abre direto no Excel em português)
+export function transactionsToCsv(items) {
+  const header = ['Data', 'Vencimento', 'Tipo', 'Descrição', 'Categoria', 'Paciente', 'Forma de pagamento', 'Status', 'Valor']
+  const esc = (v) => {
+    const s = String(v ?? '')
+    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const rows = items.map((t) => [
+    formatDateKey(t.paidDate),
+    formatDateKey(t.dueDate),
+    t.type === 'despesa' ? 'Despesa' : 'Receita',
+    t.description,
+    t.category,
+    t.patientName || '',
+    t.method || '',
+    t.displayStatus,
+    (t.type === 'despesa' ? -t.amount : t.amount).toFixed(2).replace('.', ',')
+  ])
+  return '﻿' + [header, ...rows].map((r) => r.map(esc).join(';')).join('\r\n')
 }
 
 // ---- Leads ----

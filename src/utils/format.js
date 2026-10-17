@@ -49,3 +49,19 @@ export function formatFileSize(bytes) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`
 }
+
+// Campo de dinheiro estilo "caixa": os dígitos digitados entram pelos centavos
+// ("15000" → "150,00"). `parseMoney` devolve o número.
+export function maskMoney(value) {
+  const digits = String(value ?? '').replace(/\D/g, '').slice(0, 11)
+  if (!digits) return ''
+  return (Number(digits) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+export function parseMoney(text) {
+  return Number(String(text ?? '').replace(/\./g, '').replace(',', '.')) || 0
+}
+
+export function moneyToInput(value) {
+  return value ? maskMoney(Math.round(value * 100)) : ''
+}

@@ -11,6 +11,9 @@ import EventAvailableRoundedIcon from '@mui/icons-material/EventAvailableRounded
 import EditRoundedIcon from '@mui/icons-material/EditRounded'
 import AddCommentRoundedIcon from '@mui/icons-material/AddCommentRounded'
 import PersonSearchRoundedIcon from '@mui/icons-material/PersonSearchRounded'
+import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded'
+import { formatCurrency } from '../../utils/format.js'
+import StatusChip from '../../components/StatusChip.jsx'
 import { brand } from '../../theme/theme.js'
 import * as afroditeApi from '../../services/afroditeApi.js'
 import { useAsync } from '../../hooks/useAsync.js'
@@ -40,6 +43,7 @@ export default function PatientProfileScreen() {
   const [sheet, setSheet] = useState(null) // 'edit' | 'contact'
   const patient = useAsync(() => afroditeApi.getPatient(id), [id])
   const timeline = useAsync(() => afroditeApi.getPatientTimeline(id), [id])
+  const finance = useAsync(() => afroditeApi.getPatientTransactions(id), [id])
   const anamnese = useAsync(() => afroditeApi.getPatientAnamnese(id), [id])
   const procedures = useAsync(() => afroditeApi.getPatientProcedures(id), [id])
 
@@ -87,6 +91,8 @@ export default function PatientProfileScreen() {
               patient={patient.data}
               anamnese={anamnese.data}
               onVerLead={() => navigate(`/leads/${patient.data.leadId}`)}
+              finance={finance.data}
+              onVerFinanceiro={() => navigate(`/financeiro?paciente=${id}`)}
               onVerAnamnese={() => navigate(`/pacientes/${id}/anamnese`)}
               onVerFotos={() => setTab(3)}
               onVerPrescricoes={() => navigate(`/pacientes/${id}/prescricoes`)}
@@ -165,7 +171,7 @@ function QuickAction({ icon, label, onClick }) {
   )
 }
 
-function ResumoTab({ patient, anamnese, onVerLead, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
+function ResumoTab({ patient, anamnese, finance, onVerFinanceiro, onVerLead, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
 
   if (!patient) {
     return (
@@ -196,6 +202,24 @@ function ResumoTab({ patient, anamnese, onVerLead, onVerAnamnese, onVerFotos, on
                 {patient.interest ? `Interesse: ${patient.interest}` : 'Ver histórico de captação'}
               </Typography>
             </Box>
+            <ChevronRightRoundedIcon sx={{ color: brand.roseLight }} />
+          </CardActionArea>
+        </Card>
+      )}
+
+      {finance && finance.items.length > 0 && (
+        <Card>
+          <CardActionArea onClick={onVerFinanceiro} sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, justifyContent: 'flex-start' }}>
+            <Box sx={{ width: 36, height: 36, borderRadius: '12px', display: 'grid', placeItems: 'center', bgcolor: brand.blush, color: brand.wine }}>
+              <PaymentsRoundedIcon sx={{ fontSize: 19 }} />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="subtitle2">Financeiro</Typography>
+              <Typography variant="caption" color="text.secondary" component="div" noWrap>
+                {formatCurrency(finance.paid, { cents: false })} pago • {formatCurrency(finance.pending, { cents: false })} em aberto
+              </Typography>
+            </Box>
+            {finance.overdue > 0 && <StatusChip status="Atrasado" />}
             <ChevronRightRoundedIcon sx={{ color: brand.roseLight }} />
           </CardActionArea>
         </Card>

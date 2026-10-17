@@ -262,24 +262,102 @@ const L1_MESSAGES = [
   { from: 'clinica', minutesAfter: 11, text: 'Protocolo de Colágeno.pdf', attachment: { name: 'Protocolo de Colágeno.pdf', size: '2.4MB' } }
 ]
 
-const PAYMENTS = [
-  { id: 'pg1', patientId: 'p1', patientName: 'Rafaela Costa', procedure: 'Toxina botulínica', amount: 2800, date: thisMonth(3), method: 'Cartão de crédito', status: 'Pago' },
-  { id: 'pg2', patientId: 'p3', patientName: 'Juliana Mendes', procedure: 'Preenchimento labial', amount: 1900, date: thisMonth(2), method: 'Pix', status: 'Pago' },
-  { id: 'pg3', patientId: 'p2', patientName: 'Camila Rocha', procedure: 'Skinbooster', amount: 680, date: thisMonth(1), method: 'Pix', status: 'Pago' },
-  { id: 'pg4', patientId: 'p5', patientName: 'Beatriz Lima', procedure: 'Bioestimulador de colágeno', amount: 2400, date: thisMonth(1), method: 'Cartão de crédito', status: 'Pago' },
-  { id: 'pg5', patientId: 'p4', patientName: 'Mariana Silva', procedure: 'Avaliação + protocolo', amount: 1200, date: null, method: 'Boleto', status: 'Pendente' },
-  { id: 'pg6', patientId: 'p1', patientName: 'Rafaela Costa', procedure: 'Protocolo de colágeno', amount: 2925, date: null, method: 'Cartão de crédito', status: 'Pendente' },
-  { id: 'pg7', patientId: 'p2', patientName: 'Camila Rocha', procedure: 'Consulta de avaliação', amount: 450, date: lastMonth(22), method: 'Pix', status: 'Pago' },
-  { id: 'pg8', patientId: 'p3', patientName: 'Juliana Mendes', procedure: 'Toxina botulínica', amount: 2800, date: lastMonth(15), method: 'Cartão de crédito', status: 'Pago' },
-  { id: 'pg9', patientId: 'p5', patientName: 'Beatriz Lima', procedure: 'Skinbooster', amount: 680, date: lastMonth(8), method: 'Pix', status: 'Pago' }
+// ---- Financeiro (coleção `transactions`) ----
+// Seis meses de receitas e despesas. No mês atual, o que vence depois de
+// hoje fica pendente; há recebimentos atrasados e um parcelamento.
+
+function monthDate(offset, day) {
+  const d = new Date(now.getFullYear(), now.getMonth() + offset, 1)
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+  d.setDate(Math.min(day, last))
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+const INCOME_TEMPLATE = [
+  { day: 2, patientId: 'p1', description: 'Toxina botulínica', category: 'Procedimento', amount: 2800, method: 'Cartão de crédito' },
+  { day: 4, patientId: 'p2', description: 'Consulta de avaliação', category: 'Consulta', amount: 450, method: 'Pix' },
+  { day: 7, patientId: 'p3', description: 'Preenchimento labial', category: 'Procedimento', amount: 1900, method: 'Pix' },
+  { day: 10, patientId: 'p5', description: 'Skinbooster', category: 'Procedimento', amount: 1360, method: 'Cartão de débito' },
+  { day: 13, patientId: 'p4', description: 'Pacote limpeza de pele (4 sessões)', category: 'Pacote', amount: 1200, method: 'Pix' },
+  { day: 17, patientId: 'p2', description: 'Bioestimulador de colágeno', category: 'Procedimento', amount: 2400, method: 'Cartão de crédito' },
+  { day: 21, patientId: 'p6', description: 'Dermocosméticos', category: 'Produto', amount: 380, method: 'Dinheiro' },
+  { day: 24, patientId: 'p1', description: 'Retorno + ajuste', category: 'Consulta', amount: 300, method: 'Pix' },
+  { day: 27, patientId: 'p3', description: 'Toxina botulínica', category: 'Procedimento', amount: 2800, method: 'Cartão de crédito' },
+  { day: 3, patientId: 'p5', description: 'Pacote bioestimulador (3 sessões)', category: 'Pacote', amount: 3600, method: 'Cartão de crédito' },
+  { day: 8, patientId: 'p1', description: 'Fios de PDO', category: 'Procedimento', amount: 3200, method: 'Pix' },
+  { day: 14, patientId: 'p6', description: 'Microagulhamento', category: 'Procedimento', amount: 1500, method: 'Cartão de débito' }
+]
+// Crescimento leve mês a mês (índice 0 = 5 meses atrás)
+const MONTH_FACTOR = [0.78, 0.84, 0.9, 0.86, 0.95, 1]
+const EXPENSE_TEMPLATE = [
+  { day: 5, description: 'Aluguel da clínica', category: 'Aluguel', amount: 4500, method: 'Boleto' },
+  { day: 5, description: 'Folha de pagamento', category: 'Salários', amount: 6200, method: 'Transferência' },
+  { day: 10, description: 'Água, luz e internet', category: 'Contas e serviços', amount: 640, method: 'Boleto' },
+  { day: 12, description: 'Insumos (ácido hialurônico e toxina)', category: 'Insumos', amount: 2300, method: 'Pix' },
+  { day: 15, description: 'Anúncios Instagram', category: 'Marketing', amount: 900, method: 'Cartão de crédito' },
+  { day: 20, description: 'Simples Nacional', category: 'Impostos', amount: 1100, method: 'Boleto' }
 ]
 
-const COMMISSIONS = [
-  { id: 'cm1', procedure: 'Toxina botulínica', base: 2800, pct: 30, date: thisMonth(3) },
-  { id: 'cm2', procedure: 'Preenchimento labial', base: 1900, pct: 30, date: thisMonth(2) },
-  { id: 'cm3', procedure: 'Skinbooster', base: 680, pct: 25, date: thisMonth(1) },
-  { id: 'cm4', procedure: 'Bioestimulador de colágeno', base: 2400, pct: 30, date: thisMonth(1) }
-]
+function buildTransactions() {
+  const today = dateKey(0)
+  const name = (pid) => PATIENTS.find((p) => p.id === pid).name
+  const list = []
+  const add = (t) => {
+    const paid = t.paid ?? t.dueDate <= today
+    list.push({
+      type: t.type,
+      description: t.description,
+      category: t.category,
+      amount: Math.round(t.amount * 100) / 100,
+      dueDate: t.dueDate,
+      paidDate: paid ? t.paidDate || t.dueDate : null,
+      status: paid ? 'Pago' : 'Pendente',
+      method: paid ? t.method || null : t.method || null,
+      monthKey: (paid ? t.paidDate || t.dueDate : t.dueDate).slice(0, 7),
+      patientId: t.patientId || null,
+      patientName: t.patientId ? name(t.patientId) : null,
+      appointmentId: null,
+      groupId: t.groupId || null,
+      installment: t.installment || null,
+      notes: ''
+    })
+  }
+  for (let offset = -5; offset <= 0; offset++) {
+    const factor = MONTH_FACTOR[offset + 5]
+    INCOME_TEMPLATE.forEach((t, idx) => {
+      // meses anteriores têm um pouco menos de atendimentos
+      if (factor < 0.9 && idx % 4 === 3) return
+      add({ ...t, type: 'receita', amount: Math.round((t.amount * (0.9 + factor / 10)) / 10) * 10, dueDate: monthDate(offset, t.day) })
+    })
+    EXPENSE_TEMPLATE.forEach((t) => {
+      const variance = t.category === 'Insumos' ? factor : 1
+      add({ ...t, type: 'despesa', amount: Math.round(t.amount * variance), dueDate: monthDate(offset, t.day) })
+    })
+  }
+  // Recebimentos em atraso
+  add({ type: 'receita', description: 'Avaliação + protocolo', category: 'Procedimento', amount: 1200, dueDate: dateKey(-10), paid: false, patientId: 'p4', method: 'Boleto' })
+  add({ type: 'receita', description: 'Sessão de skinbooster', category: 'Procedimento', amount: 680, dueDate: dateKey(-4), paid: false, patientId: 'p5', method: 'Pix' })
+  // A receber no futuro
+  add({ type: 'receita', description: 'Preenchimento — saldo', category: 'Procedimento', amount: 950, dueDate: dateKey(5), paid: false, patientId: 'p3' })
+  // Parcelamento 3x (1ª paga hoje)
+  ;[0, 1, 2].forEach((i) =>
+    add({
+      type: 'receita',
+      description: `Protocolo de colágeno (${i + 1}/3)`,
+      category: 'Pacote',
+      amount: 975,
+      dueDate: i === 0 ? dateKey(0) : monthDate(i, now.getDate()),
+      paid: i === 0,
+      patientId: 'p1',
+      method: 'Cartão de crédito',
+      groupId: 'grp-colageno-p1',
+      installment: { n: i + 1, total: 3 }
+    })
+  )
+  // A pagar: parcela de equipamento no próximo mês
+  add({ type: 'despesa', description: 'Equipamento de radiofrequência (parcela)', category: 'Equipamentos', amount: 1450, dueDate: monthDate(1, 8), paid: false, method: 'Boleto' })
+  return list
+}
 
 // ---- Escrita ----
 
@@ -384,10 +462,13 @@ async function seedActivities() {
 }
 
 async function seedFinance() {
-  const batch = db.batch()
-  for (const { id, ...data } of PAYMENTS) batch.set(db.doc(`payments/${id}`), data)
-  for (const { id, ...data } of COMMISSIONS) batch.set(db.doc(`commissions/${id}`), data)
-  await batch.commit()
+  const items = buildTransactions()
+  for (let i = 0; i < items.length; i += 400) {
+    const batch = db.batch()
+    items.slice(i, i + 400).forEach((t, k) => batch.set(db.doc(`transactions/t${String(i + k + 1).padStart(3, '0')}`), { ...t, createdAt: Timestamp.now() }))
+    await batch.commit()
+  }
+  await db.doc('settings/finance').set({ commissionRates: { Procedimento: 30, Pacote: 25, Consulta: 0, Produto: 10, Outro: 0 } })
 }
 
 // Algumas notificações de exemplo para a central não começar vazia
@@ -412,7 +493,7 @@ async function seedNotifications() {
 
 async function main() {
   console.log(`Populando emuladores (projeto ${PROJECT_ID})...`)
-  for (const c of ['users', 'patients', 'appointments', 'leads', 'payments', 'commissions']) {
+  for (const c of ['users', 'patients', 'appointments', 'leads', 'payments', 'commissions', 'transactions', 'settings']) {
     await clearCollection(c)
   }
   await seedUsers()

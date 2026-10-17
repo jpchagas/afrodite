@@ -19,6 +19,8 @@ import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded'
 import ScienceRoundedIcon from '@mui/icons-material/ScienceRounded'
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded'
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded'
+import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded'
+import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import { brand } from '../theme/theme.js'
 import { friendlyMessage } from '../utils/errors.js'
 import * as afroditeApi from '../services/afroditeApi.js'
@@ -30,6 +32,8 @@ import PatientHeader from '../components/PatientHeader.jsx'
 import StatusChip from '../components/StatusChip.jsx'
 import SectionTitle from '../components/SectionTitle.jsx'
 import { ErrorState } from '../components/StateViews.jsx'
+import TransactionFormSheet from './finance/TransactionFormSheet.jsx'
+import { formatCurrency } from '../utils/format.js'
 
 const PREP_ITEMS = [
   'Confirmar se a paciente está bem',
@@ -66,6 +70,7 @@ export default function AppointmentDetailScreen() {
   const toast = useToast()
   const [checked, setChecked] = useState({})
   const [saving, setSaving] = useState(false)
+  const [charging, setCharging] = useState(false)
 
   const appt = useAsync(() => afroditeApi.getAppointment(id), [id])
   const patientId = appt.data?.patientId
@@ -74,8 +79,16 @@ export default function AppointmentDetailScreen() {
     [patientId]
   )
 
+  const charges = useAsync(() => afroditeApi.getAppointmentTransactions(id), [id])
   const appointment = appt.data
   const next = appointment && NEXT_STEP[appointment.status]
+  const chargeDefaults = appointment && {
+    type: 'receita',
+    description: appointment.procedure,
+    category: /consulta|avalia|retorno/i.test(appointment.procedure) ? 'Consulta' : 'Procedimento',
+    patient: { id: appointment.patientId, name: appointment.patientName },
+    appointmentId: id
+  }
 
   async function advanceStatus() {
     setSaving(true)
@@ -83,6 +96,8 @@ export default function AppointmentDetailScreen() {
       const updated = await afroditeApi.updateAppointmentStatus(id, next.status)
       appt.setData(updated)
       toast(next.toast)
+      // Ao finalizar sem cobrança registrada, já abre o lançamento
+      if (next.status === 'Concluído' && charges.data && charges.data.length === 0) setCharging(true)
     } catch (err) {
       toast(friendlyMessage(err, 'Não foi possível atualizar o atendimento'), { severity: 'error' })
     } finally {
@@ -145,6 +160,36 @@ export default function AppointmentDetailScreen() {
             />
           </Stack>
 
+          <SectionTitle>Cobrança</SectionTitle>
+          {charges.data && charges.data.length > 0 ? (
+            <Card>
+              <ButtonBase
+                onClick={() => navigate(`/financeiro?paciente=${appointment.patientId}`)}
+                sx={{ width: '100%', p: 2, gap: 1.5, justifyContent: 'flex-start', textAlign: 'left' }}
+              >
+                <Box sx={{ width: 40, height: 40, borderRadius: '13px', display: 'grid', placeItems: 'center', bgcolor: brand.blush, color: brand.wine }}>
+                  <PaymentsRoundedIcon sx={{ fontSize: 20 }} />
+                </Box>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography variant="subtitle2">
+                    {formatCurrency(charges.data.reduce((s, t) => s + t.amount, 0))}
+                    {charges.data.length > 1 ? ` em ${charges.data.length} parcelas` : ''}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
+                    {[...new Set(charges.data.map((t) => t.displayStatus))].map((s) => (
+                      <StatusChip key={s} status={s} />
+                    ))}
+                  </Box>
+                </Box>
+                <ChevronRightRoundedIcon sx={{ color: brand.roseLight }} />
+              </ButtonBase>
+            </Card>
+          ) : (
+            <Button fullWidth size="large" variant="outlined" startIcon={<PaymentsRoundedIcon />} onClick={() => setCharging(true)} disabled={!charges.data}>
+              Registrar cobrança
+            </Button>
+          )}
+
           <SectionTitle>Preparação</SectionTitle>
           <Card sx={{ px: 1.5, py: 0.75 }}>
             <Stack>
@@ -197,6 +242,15 @@ export default function AppointmentDetailScreen() {
           </Stack>
         </>
       )}
+      <TransactionFormSheet
+        open={charging}
+        onClose={() => setCharging(false)}
+        defaults={chargeDefaults}
+        onSaved={(created) => {
+          charges.setData((prev) => [...(prev || []), ...created])
+          toast(created.length > 1 ? `${created.length} parcelas lançadas` : 'Cobrança registrada')
+        }}
+      />
     </AppScreen>
   )
 }

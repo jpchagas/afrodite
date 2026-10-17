@@ -29,6 +29,7 @@ const STATUS_TONE = {
   // Financeiro / procedimentos / prescrições
   Pago: 'success',
   Pendente: 'warning',
+  Atrasado: 'danger',
   Concluído: 'success',
   'Em andamento': 'warning',
   'Em dia': 'success',
