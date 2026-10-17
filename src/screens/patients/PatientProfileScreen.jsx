@@ -8,6 +8,9 @@ import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded'
 import WhatsAppIcon from '@mui/icons-material/WhatsApp'
 import EventAvailableRoundedIcon from '@mui/icons-material/EventAvailableRounded'
+import EditRoundedIcon from '@mui/icons-material/EditRounded'
+import AddCommentRoundedIcon from '@mui/icons-material/AddCommentRounded'
+import PersonSearchRoundedIcon from '@mui/icons-material/PersonSearchRounded'
 import { brand } from '../../theme/theme.js'
 import * as afroditeApi from '../../services/afroditeApi.js'
 import { useAsync } from '../../hooks/useAsync.js'
@@ -17,13 +20,14 @@ import PatientHeader from '../../components/PatientHeader.jsx'
 import SectionTabs from '../../components/SectionTabs.jsx'
 import InsightCard from '../../components/InsightCard.jsx'
 import InfoField from '../../components/InfoField.jsx'
-import ListCard from '../../components/ListCard.jsx'
-import StatusChip from '../../components/StatusChip.jsx'
 import { EmptyState, ErrorState, ListSkeleton } from '../../components/StateViews.jsx'
 import { HeaderIconButton } from '../../components/ScreenHeader.jsx'
 import ProceduresList from './partials/ProceduresList.jsx'
 import PhotosGallery from './partials/PhotosGallery.jsx'
 import NewAppointmentSheet from '../agenda/NewAppointmentSheet.jsx'
+import ActivityTimeline from '../../components/ActivityTimeline.jsx'
+import LogContactSheet from '../../components/LogContactSheet.jsx'
+import EditPatientSheet from './partials/EditPatientSheet.jsx'
 
 const TABS = ['Resumo', 'Histórico', 'Procedimentos', 'Fotos']
 
@@ -33,7 +37,9 @@ export default function PatientProfileScreen() {
   const toast = useToast()
   const [tab, setTab] = useState(0)
   const [scheduling, setScheduling] = useState(false)
+  const [sheet, setSheet] = useState(null) // 'edit' | 'contact'
   const patient = useAsync(() => afroditeApi.getPatient(id), [id])
+  const timeline = useAsync(() => afroditeApi.getPatientTimeline(id), [id])
   const anamnese = useAsync(() => afroditeApi.getPatientAnamnese(id), [id])
   const procedures = useAsync(() => afroditeApi.getPatientProcedures(id), [id])
 
@@ -47,17 +53,24 @@ export default function PatientProfileScreen() {
           error={patient.error}
           title="Paciente"
           actions={
-            phoneDigits && (
-              <HeaderIconButton
-                aria-label="WhatsApp"
-                component="a"
-                href={`https://wa.me/55${phoneDigits}`}
-                target="_blank"
-                rel="noopener"
-                sx={{ color: '#1f9d55' }}
-              >
-                <WhatsAppIcon sx={{ fontSize: 20 }} />
-              </HeaderIconButton>
+            patient.data && (
+              <>
+                {phoneDigits && (
+                  <HeaderIconButton
+                    aria-label="WhatsApp"
+                    component="a"
+                    href={`https://wa.me/55${phoneDigits}`}
+                    target="_blank"
+                    rel="noopener"
+                    sx={{ color: '#1f9d55' }}
+                  >
+                    <WhatsAppIcon sx={{ fontSize: 20 }} />
+                  </HeaderIconButton>
+                )}
+                <HeaderIconButton aria-label="Editar paciente" onClick={() => setSheet('edit')}>
+                  <EditRoundedIcon sx={{ fontSize: 19 }} />
+                </HeaderIconButton>
+              </>
             )
           }
         >
@@ -72,8 +85,8 @@ export default function PatientProfileScreen() {
           {tab === 0 && (
             <ResumoTab
               patient={patient.data}
-          error={patient.error}
               anamnese={anamnese.data}
+              onVerLead={() => navigate(`/leads/${patient.data.leadId}`)}
               onVerAnamnese={() => navigate(`/pacientes/${id}/anamnese`)}
               onVerFotos={() => setTab(3)}
               onVerPrescricoes={() => navigate(`/pacientes/${id}/prescricoes`)}
@@ -81,7 +94,7 @@ export default function PatientProfileScreen() {
               onAgendar={() => setScheduling(true)}
             />
           )}
-          {tab === 1 && <HistoricoTab state={procedures} />}
+          {tab === 1 && <RelationshipTab state={timeline} onLogContact={() => setSheet('contact')} />}
           {tab === 2 && <ProceduresList state={procedures} />}
           {tab === 3 && <PhotosGallery patientId={id} />}
         </>
@@ -94,6 +107,27 @@ export default function PatientProfileScreen() {
         onCreated={(appt) => {
           toast(`Agendado para ${appt.date.toLocaleDateString('pt-BR')} às ${appt.time}`)
           patient.reload()
+          timeline.reload()
+        }}
+      />
+      <EditPatientSheet
+        open={sheet === 'edit'}
+        onClose={() => setSheet(null)}
+        patient={patient.data}
+        onSaved={(updated) => {
+          patient.setData(updated)
+          timeline.reload()
+          toast('Dados atualizados')
+        }}
+      />
+      <LogContactSheet
+        open={sheet === 'contact'}
+        onClose={() => setSheet(null)}
+        target="patients"
+        id={id}
+        onSaved={() => {
+          timeline.reload()
+          toast('Contato registrado')
         }}
       />
     </AppScreen>
@@ -131,7 +165,7 @@ function QuickAction({ icon, label, onClick }) {
   )
 }
 
-function ResumoTab({ patient, anamnese, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
+function ResumoTab({ patient, anamnese, onVerLead, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
 
   if (!patient) {
     return (
@@ -149,6 +183,23 @@ function ResumoTab({ patient, anamnese, onVerAnamnese, onVerFotos, onVerPrescric
         <DateCard label="Última consulta" value={patient.lastVisit} caption={patient.lastVisitLabel} />
         <DateCard label="Próximo retorno" value={patient.nextReturn} caption={patient.nextReturnLabel} />
       </Box>
+
+      {patient.leadId && (
+        <Card>
+          <CardActionArea onClick={onVerLead} sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, justifyContent: 'flex-start' }}>
+            <Box sx={{ width: 36, height: 36, borderRadius: '12px', display: 'grid', placeItems: 'center', bgcolor: brand.blush, color: brand.wine }}>
+              <PersonSearchRoundedIcon sx={{ fontSize: 19 }} />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="subtitle2">Veio de lead{patient.source ? ` • ${patient.source}` : ''}</Typography>
+              <Typography variant="caption" color="text.secondary" noWrap component="div">
+                {patient.interest ? `Interesse: ${patient.interest}` : 'Ver histórico de captação'}
+              </Typography>
+            </Box>
+            <ChevronRightRoundedIcon sx={{ color: brand.roseLight }} />
+          </CardActionArea>
+        </Card>
+      )}
 
       <Button fullWidth size="large" variant="outlined" startIcon={<EventAvailableRoundedIcon />} onClick={onAgendar}>
         Agendar atendimento
@@ -193,40 +244,18 @@ function ResumoTab({ patient, anamnese, onVerAnamnese, onVerFotos, onVerPrescric
   )
 }
 
-function HistoricoTab({ state }) {
-  if (state.loading) return <ListSkeleton count={3} height={68} />
-  if (state.error) return <ErrorState error={state.error} onRetry={state.reload} />
-  if (state.data.length === 0) {
-    return <EmptyState icon={<HistoryRoundedIcon />} title="Sem histórico" description="Nenhum atendimento registrado ainda." />
-  }
-
+function RelationshipTab({ state, onLogContact }) {
   return (
-    <Box sx={{ position: 'relative', pl: 3 }}>
-      <Box sx={{ position: 'absolute', left: 7, top: 12, bottom: 12, width: 2, bgcolor: brand.blush, borderRadius: 1 }} />
-      <Stack spacing={1.25}>
-        {state.data.map((proc, idx) => (
-          <Box key={proc.id} sx={{ position: 'relative' }}>
-            <Box
-              sx={{
-                position: 'absolute',
-                left: -24,
-                top: 22,
-                width: 12,
-                height: 12,
-                borderRadius: '50%',
-                bgcolor: idx === 0 ? brand.wine : brand.surface,
-                border: `2px solid ${idx === 0 ? brand.wine : brand.roseLight}`
-              }}
-            />
-            <ListCard
-              index={idx}
-              title={proc.name}
-              subtitle={`${proc.date} • ${proc.area}`}
-              trailing={<StatusChip status={proc.status} />}
-            />
-          </Box>
-        ))}
-      </Stack>
-    </Box>
+    <>
+      <Button fullWidth variant="contained" startIcon={<AddCommentRoundedIcon />} onClick={onLogContact} sx={{ mb: 2 }}>
+        Registrar contato
+      </Button>
+      {state.loading && <ListSkeleton count={4} height={56} />}
+      {state.error && <ErrorState error={state.error} onRetry={state.reload} />}
+      {state.data && state.data.length === 0 && (
+        <EmptyState icon={<HistoryRoundedIcon />} title="Sem histórico" description="Contatos, agendamentos e procedimentos aparecem aqui." />
+      )}
+      {state.data && state.data.length > 0 && <ActivityTimeline items={state.data} />}
+    </>
   )
 }

@@ -58,3 +58,29 @@ export async function sendDueReminders(now = new Date()) {
   }
   return due.length
 }
+
+// Próximo contato de leads: avisa a equipe uma vez no dia marcado, a partir
+// das 8h (horário da clínica).
+const OPEN_STAGES = ['Novo', 'Em contato', 'Qualificado', 'Proposta']
+const FOLLOW_UP_HOUR = 8
+
+export async function sendFollowUpReminders(now = new Date()) {
+  const { dateKey, minutes } = clinicNow(now)
+  if (minutes < FOLLOW_UP_HOUR * 60) return 0
+  const snap = await db.collection('leads').where('nextFollowUp', '==', dateKey).get()
+  const due = snap.docs.filter((d) => {
+    const l = d.data()
+    return OPEN_STAGES.includes(l.status) && l.followUpNotified !== dateKey
+  })
+  for (const d of due) {
+    const l = d.data()
+    await d.ref.update({ followUpNotified: dateKey })
+    await notifyStaff({
+      type: 'followup',
+      title: `Retomar contato: ${l.name}`,
+      body: [l.interest, l.status].filter(Boolean).join(' • '),
+      link: `/leads/${d.id}`
+    })
+  }
+  return due.length
+}

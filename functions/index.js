@@ -8,7 +8,7 @@ import { setGlobalOptions } from 'firebase-functions/options'
 import { onDocumentCreated } from 'firebase-functions/firestore'
 import { onSchedule } from 'firebase-functions/scheduler'
 import { db, notifyStaff, formatDateKey, truncate } from './notify.js'
-import { sendDueReminders, TIME_ZONE } from './reminders.js'
+import { sendDueReminders, sendFollowUpReminders, TIME_ZONE } from './reminders.js'
 
 // Mesma região do Firestore (nam5)
 setGlobalOptions({ region: 'us-central1', maxInstances: 5 })
@@ -55,5 +55,6 @@ export const appointmentReminders = onSchedule(
   { schedule: 'every 5 minutes', timeZone: TIME_ZONE },
   async () => {
     await sendDueReminders()
+    await sendFollowUpReminders()
   }
 )

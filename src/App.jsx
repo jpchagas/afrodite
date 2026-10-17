@@ -1,5 +1,5 @@
 import React from 'react'
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ToastProvider } from './context/ToastContext.jsx'
 import { NotificationsProvider } from './context/NotificationsContext.jsx'
@@ -41,6 +41,13 @@ const PRIVATE_ROUTES = [
   ['/notificacoes', NotificationsScreen]
 ]
 
+// Remonta a tela quando o :id da URL muda (ex.: de um lead para outro pela
+// notificação), para não herdar aba, formulários abertos ou dados do anterior
+function KeyedByParams({ Screen }) {
+  const params = useParams()
+  return <Screen key={JSON.stringify(params)} />
+}
+
 function PrivateRoute({ children }) {
   const { user } = useAuth()
   return user ? children : <Navigate to="/login" replace />
@@ -71,7 +78,7 @@ function AppRoutes() {
           path={path}
           element={
             <PrivateRoute>
-              <Screen />
+              <KeyedByParams Screen={Screen} />
             </PrivateRoute>
           }
         />

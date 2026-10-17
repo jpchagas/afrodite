@@ -124,7 +124,10 @@ const PATIENTS = [
     lastVisit: dateKey(-40),
     lastVisitLabel: 'Avaliação',
     nextReturn: dateKey(21),
-    nextReturnLabel: 'Pós procedimento'
+    nextReturnLabel: 'Pós procedimento',
+    leadId: 'l6',
+    source: 'Instagram',
+    interest: 'Consulta de avaliação'
   },
   {
     id: 'p6',
@@ -201,13 +204,56 @@ const APPOINTMENTS = [
 ]
 
 const LEADS = [
-  { id: 'l1', name: 'Juliana Alves', phone: '(51) 99118-7777', interest: 'Protocolo de colágeno', status: 'Novo', source: 'Instagram', createdAt: hoursAgo(2, 10), proposalValue: 1900, downPayment: 0, notes: 'Perguntou sobre o protocolo de estímulo de colágeno visto no Instagram.' },
-  { id: 'l2', name: 'Tatiane Souza', phone: '(51) 98777-0066', interest: 'Toxina botulínica', status: 'Em contato', source: 'Indicação', createdAt: hoursAgo(5, 30), proposalValue: 2800, downPayment: 500, notes: 'Indicada por uma paciente atual.' },
-  { id: 'l3', name: 'Carla Martins', phone: '(51) 99866-5555', interest: 'Skinbooster', status: 'Qualificado', source: 'Site', createdAt: hoursAgo(20), proposalValue: 680, downPayment: 0, notes: '' },
-  { id: 'l4', name: 'Fernanda Lima', phone: '(51) 99165-4444', interest: 'Tratamento facial completo', status: 'Proposta', source: 'WhatsApp', createdAt: hoursAgo(30), proposalValue: 3200, downPayment: 1000, notes: 'Proposta enviada, aguardando retorno.' },
-  { id: 'l5', name: 'Patrícia Nunes', phone: '(51) 99321-8080', interest: 'Bioestimulador de colágeno', status: 'Proposta', source: 'Instagram', createdAt: hoursAgo(52), proposalValue: 2400, downPayment: 0, notes: 'Pediu parcelamento em 3x.' },
-  { id: 'l6', name: 'Beatriz Fontoura', phone: '(51) 99009-2222', interest: 'Consulta de avaliação', status: 'Convertido', source: 'Instagram', createdAt: hoursAgo(24 * 10), proposalValue: 450, downPayment: 450, notes: 'Convertida — já é paciente ativa.' }
+  { id: 'l1', name: 'Juliana Alves', phone: '(51) 99118-7777', email: 'juliana.alves@exemplo.com', interest: 'Protocolo de colágeno', status: 'Novo', source: 'Instagram', createdAt: hoursAgo(2, 10), proposalValue: 1900, downPayment: 0, notes: 'Perguntou sobre o protocolo de estímulo de colágeno visto no Instagram.', nextFollowUp: dateKey(0) },
+  { id: 'l2', name: 'Tatiane Souza', phone: '(51) 98777-0066', interest: 'Toxina botulínica', status: 'Em contato', source: 'Indicação', createdAt: hoursAgo(5, 30), proposalValue: 2800, downPayment: 500, notes: 'Indicada por uma paciente atual.', nextFollowUp: dateKey(-1) },
+  { id: 'l3', name: 'Carla Martins', phone: '(51) 99866-5555', interest: 'Skinbooster', status: 'Qualificado', source: 'Site', createdAt: hoursAgo(20), proposalValue: 680, downPayment: 0, notes: '', nextFollowUp: dateKey(2) },
+  { id: 'l4', name: 'Fernanda Lima', phone: '(51) 99165-4444', interest: 'Tratamento facial completo', status: 'Proposta', source: 'WhatsApp', createdAt: hoursAgo(30), proposalValue: 3200, downPayment: 1000, notes: 'Proposta enviada, aguardando retorno.', nextFollowUp: dateKey(0) },
+  { id: 'l5', name: 'Patrícia Nunes', phone: '(51) 99321-8080', interest: 'Bioestimulador de colágeno', status: 'Proposta', source: 'Instagram', createdAt: hoursAgo(52), proposalValue: 2400, downPayment: 0, notes: 'Pediu parcelamento em 3x.', nextFollowUp: dateKey(-3) },
+  { id: 'l6', name: 'Beatriz Lima', phone: '(51) 99345-6789', interest: 'Consulta de avaliação', status: 'Convertido', source: 'Instagram', createdAt: hoursAgo(24 * 45), proposalValue: 450, downPayment: 450, notes: 'Convertida — já é paciente ativa.', nextFollowUp: null, patientId: 'p5' },
+  { id: 'l7', name: 'Renata Prado', phone: '(51) 99777-3131', interest: 'Lipo de papada enzimática', status: 'Perdido', source: 'Google', createdAt: hoursAgo(24 * 12), proposalValue: 1500, downPayment: 0, notes: '', nextFollowUp: null, lostReason: 'Preço' }
 ]
+
+// Histórico de relacionamento (atividades) — horas atrás em relação a agora
+const LEAD_ACTIVITIES = {
+  l1: [{ type: 'criado', text: 'Lead cadastrado • origem: Instagram', hours: 2.2 }],
+  l2: [
+    { type: 'criado', text: 'Lead cadastrado • origem: Indicação', hours: 5.5 },
+    { type: 'ligacao', label: 'Ligação', text: 'Conversamos sobre toxina; quer agendar após o dia 20.', hours: 5 },
+    { type: 'status', text: 'Movido de "Novo" para "Em contato"', hours: 5 }
+  ],
+  l3: [
+    { type: 'criado', text: 'Lead cadastrado • origem: Site', hours: 20 },
+    { type: 'whatsapp', label: 'WhatsApp', text: 'Enviou fotos da pele; boa candidata a skinbooster.', hours: 18 },
+    { type: 'status', text: 'Movido de "Em contato" para "Qualificado"', hours: 17 }
+  ],
+  l4: [
+    { type: 'criado', text: 'Lead cadastrado • origem: WhatsApp', hours: 30 },
+    { type: 'visita', label: 'Visita', text: 'Veio à clínica para avaliação; proposta de tratamento completo.', hours: 26 },
+    { type: 'proposta', text: 'Proposta atualizada para R$ 3.200,00', hours: 25 },
+    { type: 'status', text: 'Movido de "Qualificado" para "Proposta"', hours: 25 }
+  ],
+  l5: [
+    { type: 'criado', text: 'Lead cadastrado • origem: Instagram', hours: 52 },
+    { type: 'nota', label: 'Nota', text: 'Pediu parcelamento em 3x sem juros.', hours: 48 }
+  ],
+  l6: [
+    { type: 'criado', text: 'Lead cadastrado • origem: Instagram', hours: 24 * 45 },
+    { type: 'ligacao', label: 'Ligação', text: 'Agendou avaliação.', hours: 24 * 44 },
+    { type: 'conversao', text: 'Convertido em paciente', hours: 24 * 40 }
+  ],
+  l7: [
+    { type: 'criado', text: 'Lead cadastrado • origem: Google', hours: 24 * 12 },
+    { type: 'perdido', text: 'Marcado como perdido • motivo: Preço', hours: 24 * 8 }
+  ]
+}
+
+const PATIENT_ACTIVITIES = {
+  p1: [
+    { type: 'whatsapp', label: 'WhatsApp', text: 'Confirmou o retorno pós-procedimento.', hours: 24 * 3 },
+    { type: 'nota', label: 'Nota', text: 'Prefere horários no fim da tarde.', hours: 24 * 20 }
+  ],
+  p5: [{ type: 'conversao', text: 'Paciente originada de lead • Instagram • Consulta de avaliação', hours: 24 * 40, leadId: 'l6' }]
+}
 
 const L1_MESSAGES = [
   { from: 'clinica', minutesAfter: 0, text: 'Olá, Juliana! Aqui é da equipe da Dra. Bárbara. Vi que você se interessou pelo protocolo de colágeno. Posso te ajudar com alguma dúvida?' },
@@ -320,6 +366,23 @@ async function seedLeads() {
   await batch.commit()
 }
 
+async function seedActivities() {
+  const batch = db.batch()
+  const write = (path, items) =>
+    items.forEach(({ hours, ...a }, idx) =>
+      batch.set(db.doc(`${path}/activities/a${idx + 1}`), {
+        ...a,
+        createdByName: 'Dra. Bárbara',
+        createdBy: 'u-admin',
+        createdAt: Timestamp.fromMillis(now.getTime() - hours * 3_600_000),
+        _seed: true
+      })
+    )
+  for (const [id, items] of Object.entries(LEAD_ACTIVITIES)) write(`leads/${id}`, items)
+  for (const [id, items] of Object.entries(PATIENT_ACTIVITIES)) write(`patients/${id}`, items)
+  await batch.commit()
+}
+
 async function seedFinance() {
   const batch = db.batch()
   for (const { id, ...data } of PAYMENTS) batch.set(db.doc(`payments/${id}`), data)
@@ -356,6 +419,7 @@ async function main() {
   await seedPatients()
   await seedAppointments()
   await seedLeads()
+  await seedActivities()
   await seedFinance()
   await seedNotifications()
   console.log('Pronto. Login: admin@afrodite.com / 123456')

@@ -218,21 +218,89 @@ export async function getPatient(id) {
   return toPatient(await getOrThrow(doc(db, 'patients', id), 'Paciente não encontrado'))
 }
 
-export async function createPatient({ name, phone, cpf, age }) {
-  const data = {
+export const PATIENT_STATUSES = ['Em avaliação', 'Ativa', 'Em acompanhamento', 'Pós procedimento', 'Inativa']
+
+function newPatientData({ name, phone, cpf, age, email }, extra = {}) {
+  return {
     name: name.trim(),
-    phone: phone.trim(),
-    cpf: cpf.trim(),
+    phone: (phone || '').trim(),
+    cpf: (cpf || '').trim(),
+    email: (email || '').trim(),
     age: age ? Number(age) : null,
     status: 'Em avaliação',
     lastVisit: null,
     lastVisitLabel: 'Sem consultas',
     nextReturn: null,
     nextReturnLabel: 'A agendar',
-    createdAt: serverTimestamp()
+    createdBy: currentUid(),
+    createdAt: serverTimestamp(),
+    ...extra
   }
-  const ref = await addDoc(collection(db, 'patients'), data)
+}
+
+export async function createPatient(fields) {
+  const ref = doc(collection(db, 'patients'))
+  const data = newPatientData(fields)
+  const batch = writeBatch(db)
+  batch.set(ref, data)
+  batch.set(activityRef('patients', ref.id), activityData('criado', 'Paciente cadastrada'))
+  await batch.commit()
   return toPatient({ id: ref.id, ...data })
+}
+
+const PATIENT_EDITABLE = ['name', 'phone', 'cpf', 'email', 'age', 'status']
+
+export async function updatePatient(id, fields) {
+  const changes = pick(fields, PATIENT_EDITABLE)
+  if ('age' in changes) changes.age = changes.age ? Number(changes.age) : null
+  for (const k of ['name', 'phone', 'cpf', 'email']) if (k in changes) changes[k] = (changes[k] || '').trim()
+  const before = await getOrThrow(doc(db, 'patients', id), 'Paciente não encontrado')
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'patients', id), { ...changes, updatedAt: serverTimestamp() })
+  if (changes.status && changes.status !== before.status) {
+    batch.set(activityRef('patients', id), activityData('status', `Status alterado de "${before.status}" para "${changes.status}"`))
+  }
+  await batch.commit()
+  return getPatient(id)
+}
+
+// Linha do tempo do relacionamento: contatos registrados, agendamentos,
+// procedimentos e o histórico como lead (quando veio de um lead).
+export async function getPatientTimeline(id) {
+  const patient = await getOrThrow(doc(db, 'patients', id), 'Paciente não encontrado')
+  const [activities, appointments, procedures, leadActivities] = await Promise.all([
+    getActivities('patients', id),
+    list(query(collection(db, 'appointments'), where('patientId', '==', id))),
+    list(collection(db, 'patients', id, 'procedures')),
+    patient.leadId ? getActivities('leads', patient.leadId).catch(() => []) : []
+  ])
+  const now = Date.now()
+  const items = [
+    ...activities,
+    // A conversão já aparece pelo lado da paciente
+    ...leadActivities.filter((a) => a.type !== 'conversao').map((a) => ({ ...a, id: `lead-${a.id}`, fromLead: true })),
+    ...appointments.map((a) => {
+      const date = parseDateKey(a.dateKey, a.time)
+      const future = date.getTime() > now && a.status === 'Agendado'
+      return {
+        id: `appt-${a.id}`,
+        type: 'agendamento',
+        date,
+        title: future ? `Agendado: ${a.procedure}` : a.procedure,
+        text: `${formatDateKey(a.dateKey)} às ${a.time} • ${a.status || 'Agendado'}`,
+        link: `/agenda/${a.id}`,
+        future
+      }
+    }),
+    ...procedures.map((p) => ({
+      id: `proc-${p.id}`,
+      type: 'procedimento',
+      date: parseDateKey(p.date),
+      title: p.name,
+      text: [p.area, p.status].filter(Boolean).join(' • ')
+    }))
+  ]
+  return items.sort((a, b) => b.date - a.date)
 }
 
 const EMPTY_ANAMNESE = {
@@ -479,9 +547,42 @@ export async function getFinanceCommissions() {
 
 // ---- Leads ----
 
+// Etapas abertas do funil e desfechos
+export const PIPELINE_STAGES = ['Novo', 'Em contato', 'Qualificado', 'Proposta']
+export const LEAD_STATUSES = [...PIPELINE_STAGES, 'Convertido', 'Perdido']
+export const LEAD_SOURCES = ['Instagram', 'WhatsApp', 'Indicação', 'Site', 'Google', 'Outro']
+export const LOST_REASONS = [
+  'Preço',
+  'Sem resposta',
+  'Escolheu outra clínica',
+  'Sem interesse no momento',
+  'Contraindicação',
+  'Outro'
+]
+
+export function isOpenLead(lead) {
+  return PIPELINE_STAGES.includes(lead.status)
+}
+
+// Estado do próximo contato: 'overdue' | 'today' | 'upcoming' | null
+function followUpInfo(lead) {
+  if (!lead.nextFollowUp || !isOpenLead(lead)) return { followUpState: null, followUpLabel: null }
+  const today = todayKey()
+  if (lead.nextFollowUp < today) {
+    const days = Math.round((parseDateKey(today) - parseDateKey(lead.nextFollowUp)) / 86_400_000)
+    return { followUpState: 'overdue', followUpLabel: days === 1 ? 'Atrasado 1 dia' : `Atrasado ${days} dias` }
+  }
+  if (lead.nextFollowUp === today) return { followUpState: 'today', followUpLabel: 'Retomar hoje' }
+  const tomorrow = toDateKey(addDays(new Date(), 1))
+  return {
+    followUpState: 'upcoming',
+    followUpLabel: lead.nextFollowUp === tomorrow ? 'Retomar amanhã' : `Retomar ${formatDateKey(lead.nextFollowUp).slice(0, 5)}`
+  }
+}
+
 function toLead(l) {
   const createdAt = toDate(l.createdAt)
-  return { ...l, createdAt, createdAtLabel: formatRelativeLabel(createdAt) }
+  return { ...l, createdAt, createdAtLabel: formatRelativeLabel(createdAt), ...followUpInfo(l) }
 }
 
 export async function getLeads() {
@@ -493,28 +594,190 @@ export async function getLead(id) {
   return toLead(await getOrThrow(doc(db, 'leads', id), 'Lead não encontrado'))
 }
 
-export async function createLead({ name, phone, interest, source, proposalValue }) {
+export async function createLead({ name, phone, email, interest, source, proposalValue, nextFollowUp }) {
+  const ref = doc(collection(db, 'leads'))
   const data = {
     name: name.trim(),
     phone: phone.trim(),
+    email: (email || '').trim(),
     interest: interest.trim(),
     source: source || 'Outro',
     status: 'Novo',
     proposalValue: Number(proposalValue) || 0,
     downPayment: 0,
     notes: '',
+    nextFollowUp: nextFollowUp || todayKey(),
     createdBy: currentUid(),
     createdAt: serverTimestamp()
   }
-  const ref = await addDoc(collection(db, 'leads'), data)
+  const batch = writeBatch(db)
+  batch.set(ref, data)
+  batch.set(activityRef('leads', ref.id), activityData('criado', `Lead cadastrado • origem: ${data.source}`))
+  await batch.commit()
   return toLead({ id: ref.id, ...data, createdAt: new Date() })
 }
 
-export const LEAD_STATUSES = ['Novo', 'Em contato', 'Qualificado', 'Proposta', 'Convertido']
+const LEAD_EDITABLE = ['name', 'phone', 'email', 'interest', 'source', 'proposalValue', 'downPayment', 'notes']
 
-export async function updateLeadStatus(id, status) {
-  await updateDoc(doc(db, 'leads', id), { status })
+export async function updateLead(id, fields) {
+  const changes = pick(fields, LEAD_EDITABLE)
+  for (const k of ['proposalValue', 'downPayment']) if (k in changes) changes[k] = Number(changes[k]) || 0
+  for (const k of ['name', 'phone', 'email', 'interest', 'notes']) if (k in changes) changes[k] = (changes[k] || '').trim()
+  const before = await getOrThrow(doc(db, 'leads', id), 'Lead não encontrado')
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'leads', id), { ...changes, updatedAt: serverTimestamp() })
+  if ('proposalValue' in changes && changes.proposalValue !== before.proposalValue) {
+    batch.set(
+      activityRef('leads', id),
+      activityData('proposta', `Proposta atualizada para ${changes.proposalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`)
+    )
+  }
+  await batch.commit()
   return getLead(id)
+}
+
+// Move o lead no funil. Para 'Perdido', informe `lostReason`.
+export async function updateLeadStatus(id, status, { lostReason = null } = {}) {
+  const before = await getOrThrow(doc(db, 'leads', id), 'Lead não encontrado')
+  if (before.status === status) return toLead(before)
+  if (status === 'Convertido' && !before.patientId) {
+    throw new Error('Para converter, use "Converter em paciente" — assim a ficha da paciente é criada.')
+  }
+  const changes = { status, statusUpdatedAt: serverTimestamp() }
+  if (status === 'Perdido') {
+    changes.lostReason = lostReason || 'Outro'
+    changes.nextFollowUp = null
+  } else {
+    changes.lostReason = null
+  }
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'leads', id), changes)
+  batch.set(
+    activityRef('leads', id),
+    activityData(
+      status === 'Perdido' ? 'perdido' : 'status',
+      status === 'Perdido'
+        ? `Marcado como perdido • motivo: ${changes.lostReason}`
+        : `Movido de "${before.status}" para "${status}"`
+    )
+  )
+  await batch.commit()
+  return getLead(id)
+}
+
+export async function setLeadFollowUp(id, dateKey) {
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'leads', id), { nextFollowUp: dateKey || null, followUpNotified: null })
+  batch.set(
+    activityRef('leads', id),
+    activityData('followup', dateKey ? `Próximo contato marcado para ${formatDateKey(dateKey)}` : 'Próximo contato removido')
+  )
+  await batch.commit()
+  return getLead(id)
+}
+
+// Converte o lead em paciente: cria a ficha, liga os dois registros e
+// leva o histórico (a linha do tempo da paciente inclui a do lead).
+export async function convertLeadToPatient(leadId, { name, phone, cpf, age, email }) {
+  const lead = await getOrThrow(doc(db, 'leads', leadId), 'Lead não encontrado')
+  if (lead.patientId) throw new Error('Este lead já foi convertido.')
+  const patientRef = doc(collection(db, 'patients'))
+  const batch = writeBatch(db)
+  batch.set(
+    patientRef,
+    newPatientData({ name, phone, cpf, age, email }, { leadId, source: lead.source || null, interest: lead.interest || null })
+  )
+  batch.update(doc(db, 'leads', leadId), {
+    status: 'Convertido',
+    patientId: patientRef.id,
+    convertedAt: serverTimestamp(),
+    nextFollowUp: null,
+    lostReason: null
+  })
+  batch.set(activityRef('leads', leadId), activityData('conversao', 'Convertido em paciente', { patientId: patientRef.id }))
+  batch.set(
+    activityRef('patients', patientRef.id),
+    activityData('conversao', `Paciente originada de lead • ${[lead.source, lead.interest].filter(Boolean).join(' • ')}`, { leadId })
+  )
+  await batch.commit()
+  return { patientId: patientRef.id }
+}
+
+// ---- Histórico de relacionamento (atividades) ----
+// `leads/{id}/activities` e `patients/{id}/activities`.
+
+export const CONTACT_KINDS = [
+  { value: 'ligacao', label: 'Ligação' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'visita', label: 'Visita' },
+  { value: 'email', label: 'E-mail' },
+  { value: 'nota', label: 'Nota' }
+]
+
+function activityRef(target, id) {
+  return doc(collection(db, target, id, 'activities'))
+}
+
+function activityData(type, text, meta = {}) {
+  const user = auth.currentUser
+  return {
+    type,
+    text,
+    ...meta,
+    createdBy: user?.uid || null,
+    createdByName: user?.displayName || user?.email || null,
+    createdAt: serverTimestamp()
+  }
+}
+
+function pick(obj, keys) {
+  return Object.fromEntries(Object.entries(obj).filter(([k, v]) => keys.includes(k) && v !== undefined))
+}
+
+export async function getActivities(target, id) {
+  const items = await list(query(collection(db, target, id, 'activities'), orderBy('createdAt', 'desc')))
+  return items.map((a) => ({ ...a, date: toDate(a.createdAt) || new Date() }))
+}
+
+/**
+ * Registra um contato (ligação, WhatsApp, visita, e-mail ou nota) no lead
+ * ou na paciente. Em leads, `nextFollowUp` (opcional) agenda o próximo
+ * contato, e um contato real tira o lead da etapa "Novo".
+ */
+export async function logContact(target, id, { kind, text, nextFollowUp }) {
+  const label = CONTACT_KINDS.find((k) => k.value === kind)?.label || 'Contato'
+  const batch = writeBatch(db)
+  batch.set(activityRef(target, id), activityData(kind, text.trim() || label, { label }))
+  if (target === 'leads') {
+    const lead = await getOrThrow(doc(db, 'leads', id), 'Lead não encontrado')
+    const changes = {}
+    if (kind !== 'nota') changes.lastContactAt = serverTimestamp()
+    if (nextFollowUp !== undefined) {
+      changes.nextFollowUp = nextFollowUp || null
+      changes.followUpNotified = null
+    }
+    if (kind !== 'nota' && lead.status === 'Novo') {
+      changes.status = 'Em contato'
+      batch.set(activityRef('leads', id), activityData('status', 'Movido de "Novo" para "Em contato"'))
+    }
+    if (Object.keys(changes).length) batch.update(doc(db, 'leads', id), changes)
+  }
+  await batch.commit()
+}
+
+// Procura leads e pacientes com o mesmo telefone (evita duplicidade)
+export async function findContactsByPhone(phone, { excludeLeadId, excludePatientId } = {}) {
+  const normalize = (p = '') => {
+    const d = p.replace(/\D/g, '')
+    return d.length >= 12 && d.startsWith('55') ? d.slice(2) : d
+  }
+  const target = normalize(phone)
+  if (target.length < 10) return { leads: [], patients: [] }
+  const [leads, patients] = await Promise.all([list(collection(db, 'leads')), list(collection(db, 'patients'))])
+  return {
+    leads: leads.filter((l) => l.id !== excludeLeadId && normalize(l.phone) === target).map(toLead),
+    patients: patients.filter((p) => p.id !== excludePatientId && normalize(p.phone) === target).map(toPatient)
+  }
 }
 
 function toMessage(m) {
@@ -534,6 +797,18 @@ export async function sendLeadMessage(id, { text, attachment = null }) {
   const data = { from: 'clinica', text: text.trim(), createdBy: currentUid(), createdAt: serverTimestamp() }
   if (attachment) data.attachment = attachment
   const ref = await addDoc(collection(db, 'leads', id, 'messages'), data)
+  // Mensagem enviada conta como contato: tira o lead de "Novo"
+  const lead = await getDoc(doc(db, 'leads', id))
+  if (lead.exists()) {
+    const batch = writeBatch(db)
+    const changes = { lastContactAt: serverTimestamp() }
+    if (lead.data().status === 'Novo') {
+      changes.status = 'Em contato'
+      batch.set(activityRef('leads', id), activityData('status', 'Movido de "Novo" para "Em contato" (mensagem no WhatsApp)'))
+    }
+    batch.update(doc(db, 'leads', id), changes)
+    await batch.commit().catch(() => {})
+  }
   return toMessage({ id: ref.id, ...data, createdAt: new Date() })
 }
 

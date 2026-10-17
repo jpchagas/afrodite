@@ -8,7 +8,8 @@ export const TONES = {
   info: { bg: '#e9eff9', fg: '#35548f', dot: '#5b7fc4' },
   brand: { bg: brand.blush, fg: brand.wine, dot: brand.rose },
   brandStrong: { bg: '#efdde5', fg: brand.wineDark, dot: brand.wine },
-  neutral: { bg: '#f0ecee', fg: '#6f6468', dot: '#a99ea3' }
+  neutral: { bg: '#f0ecee', fg: '#6f6468', dot: '#a99ea3' },
+  danger: { bg: '#fbe9ec', fg: '#9b2c3e', dot: '#c94b5e' }
 }
 
 const STATUS_TONE = {
@@ -24,6 +25,7 @@ const STATUS_TONE = {
   Qualificado: 'brand',
   Proposta: 'brandStrong',
   Convertido: 'success',
+  Perdido: 'danger',
   // Financeiro / procedimentos / prescrições
   Pago: 'success',
   Pendente: 'warning',
