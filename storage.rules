@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// Arquivos das pacientes. Leitura e escrita exigem login; o upload é
+// limitado por tipo e tamanho. Os links de download gerados pelo app
+// (getDownloadURL) funcionam para quem tiver o link — não compartilhe-os.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /patients/{patientId}/photos/{file} {
+      allow read, delete: if signedIn();
+      allow create: if signedIn()
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /patients/{patientId}/documents/{documentId}/{file} {
+      allow read, delete: if signedIn();
+      allow create: if signedIn()
+        && request.resource.size < 20 * 1024 * 1024
+        && (request.resource.contentType == 'application/pdf'
+            || request.resource.contentType.matches('image/.*'));
+    }
+  }
+}

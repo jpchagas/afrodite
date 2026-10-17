@@ -9,6 +9,7 @@ import { useAsync } from '../../hooks/useAsync.js'
 import { formatCurrency } from '../../utils/format.js'
 import AppScreen from '../../components/AppScreen.jsx'
 import ScreenHeader from '../../components/ScreenHeader.jsx'
+import NotificationBell from '../../components/NotificationBell.jsx'
 import PillTabs from '../../components/PillTabs.jsx'
 import ListCard from '../../components/ListCard.jsx'
 import PersonAvatar from '../../components/PersonAvatar.jsx'
@@ -48,6 +49,7 @@ export default function LeadsListScreen() {
         <ScreenHeader
           large
           title="Leads"
+          actions={<NotificationBell />}
           subtitle={leads ? `${formatCurrency(pipeline, { cents: false })} em negociação` : ' '}
         >
           <PillTabs value={filter} onChange={setFilter} items={tabs} />

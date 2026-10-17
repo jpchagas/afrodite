@@ -27,10 +27,12 @@ export function ToastProvider({ children }) {
         autoHideDuration={2800}
         onClose={handleClose}
         anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        sx={{ top: 'calc(env(safe-area-inset-top, 0px) + 12px) !important' }}
+        // Não captura toques: o aviso fica sobre o cabeçalho e não pode
+        // bloquear botões como voltar/fechar enquanto está visível
+        sx={{ top: 'calc(env(safe-area-inset-top, 0px) + 12px) !important', pointerEvents: 'none' }}
       >
         {current ? (
-          <Alert severity={current.severity} variant="filled" onClose={handleClose} sx={{ width: '100%' }}>
+          <Alert severity={current.severity} variant="filled" sx={{ width: '100%', pointerEvents: 'none' }}>
             {current.message}
           </Alert>
         ) : undefined}

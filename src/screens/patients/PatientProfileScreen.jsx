@@ -7,6 +7,7 @@ import FolderRoundedIcon from '@mui/icons-material/FolderRounded'
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded'
 import WhatsAppIcon from '@mui/icons-material/WhatsApp'
+import EventAvailableRoundedIcon from '@mui/icons-material/EventAvailableRounded'
 import { brand } from '../../theme/theme.js'
 import * as afroditeApi from '../../services/afroditeApi.js'
 import { useAsync } from '../../hooks/useAsync.js'
@@ -22,13 +23,16 @@ import { EmptyState, ErrorState, ListSkeleton } from '../../components/StateView
 import { HeaderIconButton } from '../../components/ScreenHeader.jsx'
 import ProceduresList from './partials/ProceduresList.jsx'
 import PhotosGallery from './partials/PhotosGallery.jsx'
+import NewAppointmentSheet from '../agenda/NewAppointmentSheet.jsx'
 
 const TABS = ['Resumo', 'Histórico', 'Procedimentos', 'Fotos']
 
 export default function PatientProfileScreen() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const toast = useToast()
   const [tab, setTab] = useState(0)
+  const [scheduling, setScheduling] = useState(false)
   const patient = useAsync(() => afroditeApi.getPatient(id), [id])
   const anamnese = useAsync(() => afroditeApi.getPatientAnamnese(id), [id])
   const procedures = useAsync(() => afroditeApi.getPatientProcedures(id), [id])
@@ -73,6 +77,8 @@ export default function PatientProfileScreen() {
               onVerAnamnese={() => navigate(`/pacientes/${id}/anamnese`)}
               onVerFotos={() => setTab(3)}
               onVerPrescricoes={() => navigate(`/pacientes/${id}/prescricoes`)}
+              onVerDocumentos={() => navigate(`/pacientes/${id}/documentos`)}
+              onAgendar={() => setScheduling(true)}
             />
           )}
           {tab === 1 && <HistoricoTab state={procedures} />}
@@ -80,6 +86,16 @@ export default function PatientProfileScreen() {
           {tab === 3 && <PhotosGallery patientId={id} />}
         </>
       )}
+
+      <NewAppointmentSheet
+        open={scheduling}
+        onClose={() => setScheduling(false)}
+        patient={patient.data}
+        onCreated={(appt) => {
+          toast(`Agendado para ${appt.date.toLocaleDateString('pt-BR')} às ${appt.time}`)
+          patient.reload()
+        }}
+      />
     </AppScreen>
   )
 }
@@ -115,8 +131,7 @@ function QuickAction({ icon, label, onClick }) {
   )
 }
 
-function ResumoTab({ patient, anamnese, onVerAnamnese, onVerFotos, onVerPrescricoes }) {
-  const toast = useToast()
+function ResumoTab({ patient, anamnese, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
 
   if (!patient) {
     return (
@@ -134,6 +149,10 @@ function ResumoTab({ patient, anamnese, onVerAnamnese, onVerFotos, onVerPrescric
         <DateCard label="Última consulta" value={patient.lastVisit} caption={patient.lastVisitLabel} />
         <DateCard label="Próximo retorno" value={patient.nextReturn} caption={patient.nextReturnLabel} />
       </Box>
+
+      <Button fullWidth size="large" variant="outlined" startIcon={<EventAvailableRoundedIcon />} onClick={onAgendar}>
+        Agendar atendimento
+      </Button>
 
       <Card>
         <CardActionArea onClick={onVerAnamnese} sx={{ p: 2 }}>
@@ -158,7 +177,7 @@ function ResumoTab({ patient, anamnese, onVerAnamnese, onVerFotos, onVerPrescric
         <QuickAction
           icon={<FolderRoundedIcon />}
           label="Documentos"
-          onClick={() => toast('Documentos chegam em breve.', { severity: 'info' })}
+          onClick={onVerDocumentos}
         />
       </Stack>
 

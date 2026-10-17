@@ -288,7 +288,8 @@ async function seedAppointments() {
       patientCpf: patient.cpf,
       procedure: a.procedure,
       room: a.room,
-      status: 'Agendado'
+      status: 'Agendado',
+      _seed: true
     })
   })
   await batch.commit()
@@ -297,7 +298,7 @@ async function seedAppointments() {
 async function seedLeads() {
   const batch = db.batch()
   for (const { id, ...data } of LEADS) {
-    batch.set(db.doc(`leads/${id}`), data)
+    batch.set(db.doc(`leads/${id}`), { ...data, _seed: true })
 
     const messages =
       id === 'l1'
@@ -311,7 +312,7 @@ async function seedLeads() {
           ]
     messages.forEach((m, idx) => {
       const createdAt = Timestamp.fromMillis(data.createdAt.toMillis() + m.minutesAfter * 60_000)
-      const msg = { from: m.from, text: m.text, createdAt }
+      const msg = { from: m.from, text: m.text, createdAt, _seed: true }
       if (m.attachment) msg.attachment = m.attachment
       batch.set(db.doc(`leads/${id}/messages/m${idx + 1}`), msg)
     })
@@ -326,6 +327,26 @@ async function seedFinance() {
   await batch.commit()
 }
 
+// Algumas notificações de exemplo para a central não começar vazia
+async function seedNotifications() {
+  const items = [
+    { type: 'lead', title: 'Novo lead: Juliana Alves', body: 'Protocolo de colágeno • via Instagram', link: '/leads/l1', minutesAgo: 130, read: false },
+    { type: 'mensagem', title: 'Mensagem de Juliana Alves', body: 'Oi! Tenho sim algumas dúvidas sobre o procedimento e os valores.', link: '/leads/l1/whatsapp', minutesAgo: 123, read: false },
+    { type: 'agendamento', title: 'Novo agendamento', body: `Rafaela Costa • ${dateKey(0).split('-').reverse().slice(0, 2).join('/')} às 16:30 — Protocolo de colágeno`, link: '/agenda/ag5', minutesAgo: 60 * 20, read: true }
+  ]
+  for (const u of USERS) {
+    await db.recursiveDelete(db.collection(`users/${u.uid}/notifications`))
+    const batch = db.batch()
+    items.forEach(({ minutesAgo, ...n }, idx) => {
+      batch.set(db.doc(`users/${u.uid}/notifications/n${idx + 1}`), {
+        ...n,
+        createdAt: Timestamp.fromMillis(now.getTime() - minutesAgo * 60_000)
+      })
+    })
+    await batch.commit()
+  }
+}
+
 async function main() {
   console.log(`Populando emuladores (projeto ${PROJECT_ID})...`)
   for (const c of ['users', 'patients', 'appointments', 'leads', 'payments', 'commissions']) {
@@ -336,6 +357,7 @@ async function main() {
   await seedAppointments()
   await seedLeads()
   await seedFinance()
+  await seedNotifications()
   console.log('Pronto. Login: admin@afrodite.com / 123456')
 }
 

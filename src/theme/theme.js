@@ -222,7 +222,8 @@ const theme = createTheme({
     MuiAlert: {
       styleOverrides: {
         root: { borderRadius: 14, alignItems: 'center' },
-        filled: { boxShadow: shadows.raised }
+        filled: { boxShadow: shadows.raised },
+        filledInfo: { backgroundColor: brand.wine }
       }
     },
     MuiListItemButton: {

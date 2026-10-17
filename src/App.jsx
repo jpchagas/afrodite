@@ -2,6 +2,7 @@ import React from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ToastProvider } from './context/ToastContext.jsx'
+import { NotificationsProvider } from './context/NotificationsContext.jsx'
 import { FullScreenLoader } from './components/StateViews.jsx'
 import SplashScreen from './screens/SplashScreen.jsx'
 import LoginScreen from './screens/LoginScreen.jsx'
@@ -12,6 +13,7 @@ import PatientsListScreen from './screens/patients/PatientsListScreen.jsx'
 import PatientProfileScreen from './screens/patients/PatientProfileScreen.jsx'
 import AnamneseScreen from './screens/patients/AnamneseScreen.jsx'
 import PrescriptionsScreen from './screens/patients/PrescriptionsScreen.jsx'
+import DocumentsScreen from './screens/patients/DocumentsScreen.jsx'
 import AgendaScreen from './screens/AgendaScreen.jsx'
 import AppointmentDetailScreen from './screens/AppointmentDetailScreen.jsx'
 import FinanceiroScreen from './screens/FinanceiroScreen.jsx'
@@ -19,6 +21,7 @@ import MaisScreen from './screens/MaisScreen.jsx'
 import LeadsListScreen from './screens/leads/LeadsListScreen.jsx'
 import LeadDetailScreen from './screens/leads/LeadDetailScreen.jsx'
 import WhatsAppScreen from './screens/leads/WhatsAppScreen.jsx'
+import NotificationsScreen from './screens/NotificationsScreen.jsx'
 
 // Telas que exigem login
 const PRIVATE_ROUTES = [
@@ -27,13 +30,15 @@ const PRIVATE_ROUTES = [
   ['/pacientes/:id', PatientProfileScreen],
   ['/pacientes/:id/anamnese', AnamneseScreen],
   ['/pacientes/:id/prescricoes', PrescriptionsScreen],
+  ['/pacientes/:id/documentos', DocumentsScreen],
   ['/agenda', AgendaScreen],
   ['/agenda/:id', AppointmentDetailScreen],
   ['/leads', LeadsListScreen],
   ['/leads/:id', LeadDetailScreen],
   ['/leads/:id/whatsapp', WhatsAppScreen],
   ['/mais', MaisScreen],
-  ['/financeiro', FinanceiroScreen]
+  ['/financeiro', FinanceiroScreen],
+  ['/notificacoes', NotificationsScreen]
 ]
 
 function PrivateRoute({ children }) {
@@ -81,9 +86,11 @@ export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <HashRouter>
-          <AppRoutes />
-        </HashRouter>
+        <NotificationsProvider>
+          <HashRouter>
+            <AppRoutes />
+          </HashRouter>
+        </NotificationsProvider>
       </ToastProvider>
     </AuthProvider>
   )

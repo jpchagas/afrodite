@@ -19,6 +19,7 @@ import SectionTitle from '../components/SectionTitle.jsx'
 import ListCard from '../components/ListCard.jsx'
 import StatusChip from '../components/StatusChip.jsx'
 import PersonAvatar from '../components/PersonAvatar.jsx'
+import NotificationBell from '../components/NotificationBell.jsx'
 import { ErrorState, ListSkeleton, EmptyState } from '../components/StateViews.jsx'
 
 function RevenueCard({ summary, onClick }) {
@@ -85,6 +86,8 @@ export default function HomeScreen() {
           eyebrow={formatLongDate(new Date(), { weekday: 'long', day: '2-digit', month: 'long' })}
           title={`${greeting()}, ${firstName}`}
           actions={
+            <>
+            <NotificationBell />
             <Box
               component="button"
               onClick={() => navigate('/mais')}
@@ -93,6 +96,7 @@ export default function HomeScreen() {
             >
               <PersonAvatar name={user?.name} size={40} />
             </Box>
+            </>
           }
         />
       }

@@ -22,6 +22,20 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Notificações são criadas pelas Cloud Functions; o dono só lê,
+    // marca como lida e apaga.
+    match /users/{uid}/notifications/{notificationId} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+    }
+
+    // Tokens de push (FCM) dos aparelhos do usuário
+    match /users/{uid}/devices/{token} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
     match /{collection}/{document=**} {
       allow read, write: if signedIn() && collection != 'users';
     }

@@ -1,16 +1,21 @@
 import React, { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, ButtonBase, Stack, Typography } from '@mui/material'
+import { Box, Button, ButtonBase, Fab, Stack, Typography } from '@mui/material'
 import EventBusyRoundedIcon from '@mui/icons-material/EventBusyRounded'
+import AddRoundedIcon from '@mui/icons-material/AddRounded'
 import { brand, shadows } from '../theme/theme.js'
 import * as afroditeApi from '../services/afroditeApi.js'
 import { useAsync } from '../hooks/useAsync.js'
+import { useToast } from '../context/ToastContext.jsx'
+import { formatDateKey } from '../services/dates.js'
 import AppScreen from '../components/AppScreen.jsx'
 import ScreenHeader from '../components/ScreenHeader.jsx'
+import NotificationBell from '../components/NotificationBell.jsx'
 import ListCard from '../components/ListCard.jsx'
 import PersonAvatar from '../components/PersonAvatar.jsx'
 import StatusChip from '../components/StatusChip.jsx'
 import { EmptyState, ErrorState, ListSkeleton } from '../components/StateViews.jsx'
+import NewAppointmentSheet from './agenda/NewAppointmentSheet.jsx'
 
 function DayStrip({ days, value, onChange }) {
   return (
@@ -60,8 +65,10 @@ function DayStrip({ days, value, onChange }) {
 export default function AgendaScreen() {
   const navigate = useNavigate()
   const dayTabs = useMemo(() => afroditeApi.getAgendaDayTabs(), [])
+  const toast = useToast()
   const [selectedDay, setSelectedDay] = useState(dayTabs[0]?.key)
-  const { data: appointments, error, loading, reload } = useAsync(
+  const [creating, setCreating] = useState(false)
+  const { data: appointments, error, loading, reload, setData } = useAsync(
     () => afroditeApi.getAppointmentsForDay(selectedDay),
     [selectedDay]
   )
@@ -69,11 +76,20 @@ export default function AgendaScreen() {
   const selectedTab = dayTabs.find((d) => d.key === selectedDay)
   const count = appointments?.length
 
+  function handleCreated(appt) {
+    toast(`${appt.patientName} agendada para ${formatDateKey(appt.dateKey)} às ${appt.time}`)
+    if (appt.dateKey === selectedDay) {
+      setData((prev) => [...(prev || []), appt].sort((a, b) => a.time.localeCompare(b.time)))
+    } else if (dayTabs.some((d) => d.key === appt.dateKey)) {
+      setSelectedDay(appt.dateKey)
+    }
+  }
+
   return (
     <AppScreen
       nav
       header={
-        <ScreenHeader large title="Agenda" eyebrow={selectedTab?.label === 'Hoje' ? 'Hoje' : selectedTab?.label}>
+        <ScreenHeader large title="Agenda" actions={<NotificationBell />} eyebrow={selectedTab?.label === 'Hoje' ? 'Hoje' : selectedTab?.label}>
           <DayStrip days={dayTabs} value={selectedDay} onChange={setSelectedDay} />
         </ScreenHeader>
       }
@@ -91,6 +107,11 @@ export default function AgendaScreen() {
           icon={<EventBusyRoundedIcon />}
           title="Nenhum atendimento"
           description="Não há compromissos agendados para este dia."
+          action={
+            <Button variant="outlined" startIcon={<AddRoundedIcon />} onClick={() => setCreating(true)}>
+              Agendar atendimento
+            </Button>
+          }
         />
       )}
 
@@ -121,6 +142,22 @@ export default function AgendaScreen() {
           </Box>
         ))}
       </Stack>
+
+      <Fab
+        color="primary"
+        aria-label="Novo agendamento"
+        onClick={() => setCreating(true)}
+        sx={{ position: 'fixed', right: 20, bottom: 'calc(env(safe-area-inset-bottom, 0px) + 100px)' }}
+      >
+        <AddRoundedIcon />
+      </Fab>
+
+      <NewAppointmentSheet
+        open={creating}
+        onClose={() => setCreating(false)}
+        defaultDate={selectedDay}
+        onCreated={handleCreated}
+      />
     </AppScreen>
   )
 }

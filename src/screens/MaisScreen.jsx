@@ -14,6 +14,7 @@ import PaidRoundedIcon from '@mui/icons-material/PaidRounded'
 import SellRoundedIcon from '@mui/icons-material/SellRounded'
 import CampaignRoundedIcon from '@mui/icons-material/CampaignRounded'
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded'
+import NotificationsNoneRoundedIcon from '@mui/icons-material/NotificationsNoneRounded'
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import { brand } from '../theme/theme.js'
@@ -50,6 +51,7 @@ export default function MaisScreen() {
   }
 
   const items = [
+    { icon: <NotificationsNoneRoundedIcon />, label: 'Notificações', onClick: () => navigate('/notificacoes') },
     { icon: <PaidRoundedIcon />, label: 'Financeiro', onClick: () => navigate('/financeiro') },
     { icon: <SellRoundedIcon />, label: 'Vendas' },
     { icon: <CampaignRoundedIcon />, label: 'Marketing' },

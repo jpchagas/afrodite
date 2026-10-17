@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "emulators": "firebase emulators:start --only auth,firestore --project demo-afrodite --import=.emulator-data --export-on-exit=.emulator-data",
+    "emulators": "firebase emulators:start --only auth,firestore,storage,functions --project demo-afrodite --import=.emulator-data --export-on-exit=.emulator-data",
     "seed": "node scripts/seed.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && firebase deploy --only hosting,firestore"
+    "deploy": "npm run build && firebase deploy --only hosting,firestore,storage,functions"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",

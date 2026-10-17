@@ -43,3 +43,9 @@ export function maskCpf(value) {
     .replace(/(\d{3})(\d)/, '$1.$2')
     .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
 }
+
+export function formatFileSize(bytes) {
+  if (bytes == null) return ''
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`
+}

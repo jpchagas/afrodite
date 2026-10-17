@@ -8,6 +8,7 @@ import * as afroditeApi from '../../services/afroditeApi.js'
 import { useAsync } from '../../hooks/useAsync.js'
 import AppScreen from '../../components/AppScreen.jsx'
 import ScreenHeader from '../../components/ScreenHeader.jsx'
+import NotificationBell from '../../components/NotificationBell.jsx'
 import PillTabs from '../../components/PillTabs.jsx'
 import ListCard from '../../components/ListCard.jsx'
 import PersonAvatar from '../../components/PersonAvatar.jsx'
@@ -61,7 +62,7 @@ export default function PatientsListScreen() {
     <AppScreen
       nav
       header={
-        <ScreenHeader large title="Pacientes">
+        <ScreenHeader large title="Pacientes" actions={<NotificationBell />}>
           <TextField
             fullWidth
             size="small"

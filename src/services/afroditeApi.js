@@ -25,13 +25,18 @@ import {
   addDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
+  writeBatch,
+  onSnapshot,
   query,
   where,
   orderBy,
+  limit,
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore'
-import { auth, db } from './firebase.js'
+import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage'
+import { app, auth, db, storage, usingEmulators } from './firebase.js'
 import {
   toDateKey,
   todayKey,
@@ -64,6 +69,10 @@ async function getOrThrow(ref, notFoundMessage) {
 
 function toDate(value) {
   return value instanceof Timestamp ? value.toDate() : value || null
+}
+
+function currentUid() {
+  return auth.currentUser?.uid || null
 }
 
 // ---- Autenticação ----
@@ -132,7 +141,9 @@ export async function requestPasswordReset(email) {
   }
 }
 
-export function logout() {
+export async function logout() {
+  // Desvincula o aparelho antes de sair, para não receber push de outra conta
+  await disablePushNotifications().catch(() => {})
   return signOut(auth)
 }
 
@@ -270,7 +281,43 @@ export async function getPatientPrescriptions(id) {
   }))
 }
 
+export const PRESCRIPTION_KINDS = ['Sessões na clínica', 'Uso domiciliar', 'Medicamento']
+
+export async function createPrescription(patientId, { name, kind, detail, startDate, nextSession }) {
+  const data = {
+    name: name.trim(),
+    kind: kind || PRESCRIPTION_KINDS[0],
+    detail: detail.trim(),
+    startDate: startDate || todayKey(),
+    nextSession: nextSession || null,
+    status: 'Em dia',
+    active: true,
+    createdBy: currentUid(),
+    createdAt: serverTimestamp()
+  }
+  const ref = await addDoc(collection(db, 'patients', patientId, 'prescriptions'), data)
+  const [created] = (await getPatientPrescriptions(patientId)).filter((rx) => rx.id === ref.id)
+  return created
+}
+
+export async function completePrescription(patientId, prescriptionId) {
+  await updateDoc(doc(db, 'patients', patientId, 'prescriptions', prescriptionId), {
+    active: false,
+    status: 'Concluído',
+    nextSession: null,
+    completedAt: serverTimestamp()
+  })
+}
+
 // ---- Agenda ----
+
+export const ROOMS = ['Sala 1 • Clínica Central', 'Sala 2 • Clínica Central']
+export const DURATIONS = [30, 45, 60, 90, 120]
+
+function toMinutes(time) {
+  const [h, m] = time.split(':').map(Number)
+  return h * 60 + m
+}
 
 function toAppointment(a) {
   const endTime = a.durationMin ? addMinutesToTime(a.time, a.durationMin) : null
@@ -306,6 +353,55 @@ export async function getAppointmentsForDay(dateKey) {
 
 export async function getAppointment(id) {
   return toAppointment(await getOrThrow(doc(db, 'appointments', id), 'Agendamento não encontrado'))
+}
+
+// Cria o agendamento após checar conflito de horário na mesma sala.
+// Também atualiza o "próximo retorno" da paciente quando for o mais próximo.
+export async function createAppointment({ patientId, procedure, dateKey, time, durationMin, room }) {
+  if (dateKey < todayKey()) throw new Error('Escolha uma data a partir de hoje.')
+
+  const [patient, sameDay] = await Promise.all([
+    getOrThrow(doc(db, 'patients', patientId), 'Paciente não encontrado'),
+    list(query(collection(db, 'appointments'), where('dateKey', '==', dateKey)))
+  ])
+
+  const start = toMinutes(time)
+  const end = start + Number(durationMin)
+  const conflict = sameDay.find((a) => {
+    if (a.room !== room || a.status === 'Concluído') return false
+    const aStart = toMinutes(a.time)
+    return start < aStart + (a.durationMin || 30) && aStart < end
+  })
+  if (conflict) {
+    throw new Error(
+      `${room.split(' •')[0]} já está ocupada às ${conflict.time} (${conflict.patientName}). Escolha outro horário ou sala.`
+    )
+  }
+
+  const data = {
+    dateKey,
+    time,
+    durationMin: Number(durationMin),
+    patientId,
+    patientName: patient.name,
+    patientAge: patient.age ?? null,
+    patientCpf: patient.cpf || null,
+    procedure: procedure.trim(),
+    room,
+    status: 'Agendado',
+    createdBy: currentUid(),
+    createdAt: serverTimestamp()
+  }
+  const ref = await addDoc(collection(db, 'appointments'), data)
+
+  if (!patient.nextReturn || patient.nextReturn < todayKey() || dateKey < patient.nextReturn) {
+    await updateDoc(doc(db, 'patients', patientId), {
+      nextReturn: dateKey,
+      nextReturnLabel: data.procedure
+    })
+  }
+
+  return toAppointment({ id: ref.id, ...data })
 }
 
 // status: 'Agendado' | 'Em atendimento' | 'Concluído'
@@ -389,6 +485,7 @@ export async function createLead({ name, phone, interest, source, proposalValue 
     proposalValue: Number(proposalValue) || 0,
     downPayment: 0,
     notes: '',
+    createdBy: currentUid(),
     createdAt: serverTimestamp()
   }
   const ref = await addDoc(collection(db, 'leads'), data)
@@ -416,8 +513,243 @@ export async function getLeadMessages(id) {
 
 // Registra uma mensagem enviada pela clínica na conversa do lead
 export async function sendLeadMessage(id, { text, attachment = null }) {
-  const data = { from: 'clinica', text: text.trim(), createdAt: serverTimestamp() }
+  const data = { from: 'clinica', text: text.trim(), createdBy: currentUid(), createdAt: serverTimestamp() }
   if (attachment) data.attachment = attachment
   const ref = await addDoc(collection(db, 'leads', id, 'messages'), data)
   return toMessage({ id: ref.id, ...data, createdAt: new Date() })
+}
+
+// ---- Arquivos (Firebase Storage) ----
+
+const MAX_PHOTO_SIDE = 2048
+
+// Reduz fotos grandes no navegador antes do envio (economiza espaço e dados
+// móveis). Se o formato não puder ser lido (ex.: HEIC no desktop), envia o
+// arquivo original.
+async function resizeImage(file) {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close?.()
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))
+    return blob ? { blob, contentType: 'image/jpeg', ext: 'jpg' } : null
+  } catch {
+    return null
+  }
+}
+
+function upload(path, blob, contentType, onProgress) {
+  return new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(storageRef(storage, path), blob, { contentType })
+    task.on(
+      'state_changed',
+      (snap) => onProgress?.(snap.bytesTransferred / snap.totalBytes),
+      (err) =>
+        reject(
+          new Error(
+            err.code === 'storage/unauthorized'
+              ? 'Arquivo não permitido (verifique o tipo e o tamanho).'
+              : 'Falha no envio do arquivo. Tente novamente.'
+          )
+        ),
+      async () => resolve(await getDownloadURL(task.snapshot.ref))
+    )
+  })
+}
+
+function safeFileName(name) {
+  return name
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^\w.-]+/g, '_')
+    .slice(-80)
+}
+
+export const PHOTO_LABELS = ['Antes', 'Depois', '30 dias', '60 dias', '90 dias', 'Evolução']
+
+export async function uploadPatientPhoto(patientId, file, { label, date }, onProgress) {
+  if (!file.type.startsWith('image/')) throw new Error('Selecione um arquivo de imagem.')
+  const ref = doc(collection(db, 'patients', patientId, 'photos'))
+  const resized = await resizeImage(file)
+  const blob = resized?.blob || file
+  const contentType = resized?.contentType || file.type
+  const ext = resized?.ext || file.name.split('.').pop()
+  const storagePath = `patients/${patientId}/photos/${ref.id}.${ext}`
+  const url = await upload(storagePath, blob, contentType, onProgress)
+  const data = {
+    label,
+    date: date || todayKey(),
+    url,
+    storagePath,
+    createdBy: currentUid(),
+    createdAt: serverTimestamp()
+  }
+  await setDoc(ref, data)
+  return { id: ref.id, ...data, dateKey: data.date, date: formatDateKey(data.date) }
+}
+
+export async function deletePatientPhoto(patientId, photo) {
+  if (photo.storagePath) await deleteObject(storageRef(storage, photo.storagePath)).catch(() => {})
+  await deleteDoc(doc(db, 'patients', patientId, 'photos', photo.id))
+}
+
+export const DOCUMENT_CATEGORIES = ['Exame', 'Termo de consentimento', 'Laudo', 'Receita', 'Outro']
+const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+
+function toDocument(d) {
+  const createdAt = toDate(d.createdAt)
+  return { ...d, createdAt, createdAtLabel: createdAt ? formatRelativeLabel(createdAt) : '' }
+}
+
+export async function getPatientDocuments(id) {
+  const docs = await list(
+    query(collection(db, 'patients', id, 'documents'), orderBy('createdAt', 'desc'))
+  )
+  return docs.map(toDocument)
+}
+
+export async function uploadPatientDocument(patientId, file, { name, category }, onProgress) {
+  const allowed = file.type === 'application/pdf' || file.type.startsWith('image/')
+  if (!allowed) throw new Error('Envie um PDF ou uma imagem.')
+  if (file.size > MAX_DOCUMENT_BYTES) throw new Error('O arquivo deve ter no máximo 20 MB.')
+  const ref = doc(collection(db, 'patients', patientId, 'documents'))
+  const storagePath = `patients/${patientId}/documents/${ref.id}/${safeFileName(file.name)}`
+  const url = await upload(storagePath, file, file.type, onProgress)
+  const data = {
+    name: (name || file.name).trim(),
+    category: category || 'Outro',
+    contentType: file.type,
+    size: file.size,
+    url,
+    storagePath,
+    createdBy: currentUid(),
+    createdAt: serverTimestamp()
+  }
+  await setDoc(ref, data)
+  return toDocument({ id: ref.id, ...data, createdAt: new Date() })
+}
+
+export async function deletePatientDocument(patientId, document) {
+  await deleteObject(storageRef(storage, document.storagePath)).catch(() => {})
+  await deleteDoc(doc(db, 'patients', patientId, 'documents', document.id))
+}
+
+// ---- Notificações ----
+// Cada usuário tem `users/{uid}/notifications`, preenchida pelas Cloud
+// Functions (novo lead, novo agendamento, lembrete de atendimento, mensagem
+// recebida). Push no celular usa Firebase Cloud Messaging.
+
+function toNotification(n) {
+  const createdAt = toDate(n.createdAt) || new Date()
+  return { ...n, createdAt, timeLabel: formatRelativeLabel(createdAt) }
+}
+
+// Assina as notificações do usuário logado em tempo real.
+// `callback(lista, novas)` — `novas` traz só as que chegaram após a carga inicial.
+export function subscribeNotifications(callback, onError) {
+  const uid = currentUid()
+  if (!uid) return () => {}
+  let initial = true
+  return onSnapshot(
+    query(collection(db, 'users', uid, 'notifications'), orderBy('createdAt', 'desc'), limit(50)),
+    (snap) => {
+      const items = snap.docs.map((d) => toNotification(withId(d)))
+      const added = initial
+        ? []
+        : snap.docChanges().filter((c) => c.type === 'added').map((c) => toNotification(withId(c.doc)))
+      initial = false
+      callback(items, added)
+    },
+    onError
+  )
+}
+
+export async function markNotificationRead(id) {
+  await updateDoc(doc(db, 'users', currentUid(), 'notifications', id), { read: true })
+}
+
+export async function markAllNotificationsRead(ids) {
+  const batch = writeBatch(db)
+  ids.forEach((id) => batch.update(doc(db, 'users', currentUid(), 'notifications', id), { read: true }))
+  await batch.commit()
+}
+
+const PUSH_TOKEN_KEY = 'afrodite_push_token'
+
+function readPushToken() {
+  try {
+    return localStorage.getItem(PUSH_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+// 'unconfigured' (sem chave VAPID) | 'unsupported' | 'local' (emuladores) |
+// 'denied' | 'enabled' | 'disabled'
+export async function getPushStatus() {
+  if (usingEmulators) return 'local'
+  if (!import.meta.env.VITE_FIREBASE_VAPID_KEY) return 'unconfigured'
+  const { isSupported } = await import('firebase/messaging')
+  if (!(await isSupported())) return 'unsupported'
+  if (Notification.permission === 'denied') return 'denied'
+  return Notification.permission === 'granted' && readPushToken() ? 'enabled' : 'disabled'
+}
+
+// O service worker do FCM recebe a config pela URL (os valores são públicos)
+function messagingSwUrl() {
+  const o = app.options
+  const params = new URLSearchParams({
+    apiKey: o.apiKey,
+    projectId: o.projectId,
+    messagingSenderId: o.messagingSenderId,
+    appId: o.appId
+  })
+  return `/firebase-messaging-sw.js?${params}`
+}
+
+export async function enablePushNotifications() {
+  const status = await getPushStatus()
+  if (status === 'local') throw new Error('Push não funciona com os emuladores locais — teste no app publicado.')
+  if (status === 'unconfigured') throw new Error('As notificações push ainda não foram configuradas.')
+  if (status === 'unsupported') {
+    throw new Error('Este navegador não suporta notificações. No iPhone, adicione o app à Tela de Início primeiro.')
+  }
+  const permission = await Notification.requestPermission()
+  if (permission !== 'granted') throw new Error('Permissão de notificações negada nas configurações do navegador.')
+
+  const { getMessaging, getToken } = await import('firebase/messaging')
+  const registration = await navigator.serviceWorker.register(messagingSwUrl(), {
+    scope: '/firebase-cloud-messaging-push-scope'
+  })
+  const token = await getToken(getMessaging(app), {
+    vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
+    serviceWorkerRegistration: registration
+  })
+  await setDoc(doc(db, 'users', currentUid(), 'devices', token), {
+    token,
+    userAgent: navigator.userAgent,
+    createdAt: serverTimestamp()
+  })
+  try {
+    localStorage.setItem(PUSH_TOKEN_KEY, token)
+  } catch {
+    // sem armazenamento local: o token continua salvo no Firestore
+  }
+}
+
+export async function disablePushNotifications() {
+  const token = readPushToken()
+  if (!token) return
+  const { getMessaging, deleteToken } = await import('firebase/messaging')
+  await deleteToken(getMessaging(app)).catch(() => {})
+  await deleteDoc(doc(db, 'users', currentUid(), 'devices', token)).catch(() => {})
+  try {
+    localStorage.removeItem(PUSH_TOKEN_KEY)
+  } catch {
+    // ignora
+  }
 }
