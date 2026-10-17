@@ -1,12 +1,29 @@
 rules_version = '2';
 
-// Regras iniciais: qualquer usuário autenticado da clínica lê e escreve tudo.
-// Antes de ir para produção com dados reais, restringir por papel (role)
-// e por clínica.
+// Regras da fase de testes: qualquer usuário autenticado lê e escreve os
+// dados da clínica. Antes de cadastrar pacientes reais, restringir por papel
+// (role) e por clínica — hoje qualquer conta criada pelo app vê tudo.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Perfis: cada pessoa só cria/edita o próprio, sempre como 'convidado'
+    // e sem poder alterar o papel. Papéis maiores são definidos pelo console.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'convidado';
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == resource.data.role;
+      allow delete: if false;
+    }
+
+    match /{collection}/{document=**} {
+      allow read, write: if signedIn() && collection != 'users';
     }
   }
 }

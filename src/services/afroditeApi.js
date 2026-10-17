@@ -8,6 +8,9 @@
 
 import {
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
   signOut,
   onAuthStateChanged,
   setPersistence,
@@ -72,7 +75,10 @@ const AUTH_ERRORS = {
   'auth/wrong-password': 'E-mail ou senha inválidos',
   'auth/user-disabled': 'Este usuário está desativado',
   'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
-  'auth/network-request-failed': 'Sem conexão com o servidor. Verifique sua internet.'
+  'auth/network-request-failed': 'Sem conexão com o servidor. Verifique sua internet.',
+  'auth/email-already-in-use': 'Já existe uma conta com este e-mail.',
+  'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
+  'auth/missing-email': 'Informe o e-mail.'
 }
 
 async function loadProfile(fbUser) {
@@ -97,6 +103,32 @@ export async function login({ email, password, remember = false }) {
     return { token, user }
   } catch (err) {
     throw new Error(AUTH_ERRORS[err.code] || 'Não foi possível entrar. Tente novamente.')
+  }
+}
+
+// Contas criadas pelo app entram como 'convidado' (as regras do Firestore
+// não permitem escolher outro papel no cadastro).
+export async function register({ name, email, password }) {
+  try {
+    await setPersistence(auth, browserLocalPersistence)
+    const cred = await createUserWithEmailAndPassword(auth, email.trim(), password)
+    const profile = { name: name.trim(), email: cred.user.email, role: 'convidado' }
+    await updateProfile(cred.user, { displayName: profile.name })
+    await setDoc(doc(db, 'users', cred.user.uid), { ...profile, createdAt: serverTimestamp() })
+    return { token: await cred.user.getIdToken(), user: profile }
+  } catch (err) {
+    throw new Error(AUTH_ERRORS[err.code] || 'Não foi possível criar a conta. Tente novamente.')
+  }
+}
+
+// Com a proteção contra enumeração de e-mails do Firebase, a chamada não
+// informa se o e-mail existe — a tela mostra sempre a mesma confirmação.
+export async function requestPasswordReset(email) {
+  try {
+    await sendPasswordResetEmail(auth, email.trim())
+  } catch (err) {
+    if (err.code === 'auth/user-not-found') return
+    throw new Error(AUTH_ERRORS[err.code] || 'Não foi possível enviar o e-mail. Tente novamente.')
   }
 }
 

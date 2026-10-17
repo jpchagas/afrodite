@@ -18,6 +18,8 @@ const app = initializeApp({
 })
 
 export const auth = getAuth(app)
+// E-mails do Firebase (redefinição de senha etc.) em português
+auth.languageCode = 'pt-BR'
 export const db = getFirestore(app)
 
 if (env.VITE_USE_FIREBASE_EMULATORS === 'true') {

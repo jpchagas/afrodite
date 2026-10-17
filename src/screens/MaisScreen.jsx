@@ -23,7 +23,12 @@ import ScreenHeader from '../components/ScreenHeader.jsx'
 import PersonAvatar from '../components/PersonAvatar.jsx'
 import SectionTitle from '../components/SectionTitle.jsx'
 
-const ROLE_LABEL = { medica: 'Médica responsável', recepcao: 'Recepção', admin: 'Administração' }
+const ROLE_LABEL = {
+  medica: 'Médica responsável',
+  recepcao: 'Recepção',
+  admin: 'Administração',
+  convidado: 'Conta de teste'
+}
 
 function MenuIcon({ children, color = brand.wine, bg = brand.blush }) {
   return (

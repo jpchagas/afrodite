@@ -6,7 +6,8 @@ import { FullScreenLoader } from './components/StateViews.jsx'
 import SplashScreen from './screens/SplashScreen.jsx'
 import LoginScreen from './screens/LoginScreen.jsx'
 import HomeScreen from './screens/HomeScreen.jsx'
-import PlaceholderScreen from './screens/PlaceholderScreen.jsx'
+import SignUpScreen from './screens/SignUpScreen.jsx'
+import ForgotPasswordScreen from './screens/ForgotPasswordScreen.jsx'
 import PatientsListScreen from './screens/patients/PatientsListScreen.jsx'
 import PatientProfileScreen from './screens/patients/PatientProfileScreen.jsx'
 import AnamneseScreen from './screens/patients/AnamneseScreen.jsx'
@@ -56,8 +57,8 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<PublicOnlyRoute><SplashScreen /></PublicOnlyRoute>} />
       <Route path="/login" element={<PublicOnlyRoute><LoginScreen /></PublicOnlyRoute>} />
-      <Route path="/criar-conta" element={<PlaceholderScreen title="Criar conta" />} />
-      <Route path="/esqueci-senha" element={<PlaceholderScreen title="Recuperar senha" />} />
+      <Route path="/criar-conta" element={<PublicOnlyRoute><SignUpScreen /></PublicOnlyRoute>} />
+      <Route path="/esqueci-senha" element={<PublicOnlyRoute><ForgotPasswordScreen /></PublicOnlyRoute>} />
 
       {PRIVATE_ROUTES.map(([path, Screen]) => (
         <Route

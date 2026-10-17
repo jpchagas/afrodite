@@ -26,6 +26,13 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  // Erros ficam com a tela de cadastro (não usam o `error` do login)
+  const signUp = useCallback(async ({ name, email, password }) => {
+    const result = await afroditeApi.register({ name, email, password })
+    setUser(result.user)
+    return result
+  }, [])
+
   const signOut = useCallback(async () => {
     await afroditeApi.logout()
     setUser(null)
@@ -41,6 +48,7 @@ export function AuthProvider({ children }) {
         loading,
         error,
         signIn,
+        signUp,
         signOut,
         clearError
       }}

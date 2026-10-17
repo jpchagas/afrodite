@@ -40,7 +40,7 @@ firebase login
 npm run deploy   # build + hosting + regras do Firestore
 ```
 
-Antes de usar dados reais: crie os usuários no Firebase Authentication, o documento `users/{uid}` com `name` e `role`, e revise `firestore.rules` (hoje qualquer usuário autenticado lê e escreve tudo).
+Qualquer pessoa pode criar uma conta pelo app (papel `convidado`). Papéis como `medica` são definidos no console, editando `users/{uid}`. Antes de usar dados reais de pacientes, revise `firestore.rules`: hoje qualquer usuário autenticado lê e escreve os dados da clínica.
 
 ## Estrutura
 
