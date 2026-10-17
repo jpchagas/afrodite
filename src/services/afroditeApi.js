@@ -331,17 +331,35 @@ function toAppointment(a) {
 }
 
 // Única função síncrona: as abas de dia são derivadas da data local.
-export function getAgendaDayTabs(count = 7) {
+// `startKey` ('YYYY-MM-DD') define o primeiro dia; padrão = hoje.
+export function getAgendaDayTabs(count = 7, startKey = todayKey()) {
+  const today = todayKey()
+  const start = parseDateKey(startKey)
   return Array.from({ length: count }).map((_, i) => {
-    const date = addDays(new Date(), i)
+    const date = addDays(start, i)
+    const key = toDateKey(date)
     const weekday = date.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')
+    const isToday = key === today
     return {
-      key: toDateKey(date),
-      label: i === 0 ? 'Hoje' : `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${date.getDate()}`,
-      weekday: i === 0 ? 'Hoje' : weekday.charAt(0).toUpperCase() + weekday.slice(1),
-      day: date.getDate()
+      key,
+      label: isToday ? 'Hoje' : `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${date.getDate()}`,
+      weekday: isToday ? 'Hoje' : weekday.charAt(0).toUpperCase() + weekday.slice(1),
+      day: date.getDate(),
+      month: date.getMonth()
     }
   })
+}
+
+// Quantidade de atendimentos por dia no intervalo (para marcar a faixa de dias)
+export async function getAppointmentCountsByDay(startKey, endKey) {
+  const appointments = await list(
+    query(
+      collection(db, 'appointments'),
+      where('dateKey', '>=', startKey),
+      where('dateKey', '<=', endKey)
+    )
+  )
+  return appointments.reduce((acc, a) => ({ ...acc, [a.dateKey]: (acc[a.dateKey] || 0) + 1 }), {})
 }
 
 export async function getAppointmentsForDay(dateKey) {

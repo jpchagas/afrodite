@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, Fab, Stack, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import AddRoundedIcon from '@mui/icons-material/AddRounded'
 import PersonSearchRoundedIcon from '@mui/icons-material/PersonSearchRounded'
 import { brand } from '../../theme/theme.js'
@@ -45,6 +45,7 @@ export default function LeadsListScreen() {
   return (
     <AppScreen
       nav
+      fab={{ label: 'Novo lead', icon: <AddRoundedIcon />, onClick: () => setCreating(true) }}
       header={
         <ScreenHeader
           large
@@ -87,15 +88,6 @@ export default function LeadsListScreen() {
           </ListCard>
         ))}
       </Stack>
-
-      <Fab
-        color="primary"
-        aria-label="Novo lead"
-        onClick={() => setCreating(true)}
-        sx={{ position: 'fixed', right: 20, bottom: 'calc(env(safe-area-inset-bottom, 0px) + 100px)' }}
-      >
-        <AddRoundedIcon />
-      </Fab>
 
       <NewLeadSheet
         open={creating}

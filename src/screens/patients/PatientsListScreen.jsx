@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, TextField, InputAdornment, Fab, Stack, Typography } from '@mui/material'
+import { Box, TextField, InputAdornment, Stack, Typography } from '@mui/material'
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded'
 import AddRoundedIcon from '@mui/icons-material/AddRounded'
 import PeopleAltRoundedIcon from '@mui/icons-material/PeopleAltRounded'
@@ -61,6 +61,7 @@ export default function PatientsListScreen() {
   return (
     <AppScreen
       nav
+      fab={{ label: 'Nova paciente', icon: <AddRoundedIcon />, onClick: () => setCreating(true) }}
       header={
         <ScreenHeader large title="Pacientes" actions={<NotificationBell />}>
           <TextField
@@ -113,15 +114,6 @@ export default function PatientsListScreen() {
           </ListCard>
         ))}
       </Stack>
-
-      <Fab
-        color="primary"
-        aria-label="Nova paciente"
-        onClick={() => setCreating(true)}
-        sx={{ position: 'fixed', right: 20, bottom: 'calc(env(safe-area-inset-bottom, 0px) + 100px)' }}
-      >
-        <AddRoundedIcon />
-      </Fab>
 
       <NewPatientSheet open={creating} onClose={() => setCreating(false)} onCreated={handleCreated} />
     </AppScreen>
