@@ -3,3 +3,6 @@ dist
 .firebase
 .env
 .DS_Store
+.emulator-data
+*-debug.log
+.env.production

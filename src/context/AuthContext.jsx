@@ -1,24 +1,21 @@
-import React, { createContext, useContext, useState, useCallback } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 import * as afroditeApi from '../services/afroditeApi.js'
 
 const AuthContext = createContext(null)
 
-const STORAGE_KEY = 'afrodite_auth'
-
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw).user : null
-  })
+  // undefined = ainda restaurando a sessão do Firebase; null = deslogado
+  const [user, setUser] = useState(undefined)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const signIn = useCallback(async (email, password) => {
+  useEffect(() => afroditeApi.onAuthChange(setUser), [])
+
+  const signIn = useCallback(async (email, password, { remember = false } = {}) => {
     setLoading(true)
     setError(null)
     try {
-      const result = await afroditeApi.login({ email, password })
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(result))
+      const result = await afroditeApi.login({ email, password, remember })
       setUser(result.user)
       return result
     } catch (err) {
@@ -31,12 +28,23 @@ export function AuthProvider({ children }) {
 
   const signOut = useCallback(async () => {
     await afroditeApi.logout()
-    sessionStorage.removeItem(STORAGE_KEY)
     setUser(null)
   }, [])
 
+  const clearError = useCallback(() => setError(null), [])
+
   return (
-    <AuthContext.Provider value={{ user, loading, error, signIn, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user: user ?? null,
+        initializing: user === undefined,
+        loading,
+        error,
+        signIn,
+        signOut,
+        clearError
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )
