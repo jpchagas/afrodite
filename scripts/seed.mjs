@@ -143,32 +143,145 @@ const PATIENTS = [
   }
 ]
 
+PATIENTS.push(
+  {
+    id: 'p7',
+    name: 'Vanessa Ribeiro',
+    age: 38,
+    cpf: '555.666.777-88',
+    phone: '(51) 99567-1234',
+    status: 'Ativa',
+    lastVisit: dateKey(-115),
+    lastVisitLabel: 'Toxina botulínica',
+    nextReturn: null,
+    nextReturnLabel: 'A agendar'
+  },
+  {
+    id: 'p8',
+    name: 'Aline Barros',
+    age: 29,
+    cpf: '666.777.888-99',
+    phone: '(51) 99678-2345',
+    status: 'Ativa',
+    lastVisit: dateKey(-35),
+    lastVisitLabel: 'Skinbooster',
+    nextReturn: null,
+    nextReturnLabel: 'A agendar'
+  }
+)
+
 const ANAMNESE = {
   p1: {
     queixaPrincipal: 'Melhorar a qualidade da pele e prevenção de linhas de expressão.',
     historicoMedico: 'Sem comorbidades.',
-    alergias: 'Não possui.',
-    procedimentosAnteriores: 'Bioestimulador de colágeno (2024).'
+    alergias: 'Nega.',
+    medicamentos: 'Anticoncepcional oral.',
+    procedimentosAnteriores: 'Bioestimulador de colágeno (2024).',
+    observacoes: '',
+    flags: {},
+    fitzpatrick: 'III'
   },
   p3: {
     queixaPrincipal: 'Volume e contorno labial.',
     historicoMedico: 'Hipotireoidismo controlado.',
-    alergias: 'Dipirona.',
-    procedimentosAnteriores: 'Preenchimento labial (2023).'
+    alergias: 'Dipirona',
+    medicamentos: 'Levotiroxina 50 mcg.',
+    procedimentosAnteriores: 'Preenchimento labial (2023).',
+    observacoes: 'Fazer profilaxia antiviral antes de procedimentos labiais.',
+    flags: { herpes: true },
+    fitzpatrick: 'II'
+  },
+  p4: {
+    queixaPrincipal: 'Manchas e textura da pele no pós-parto.',
+    historicoMedico: 'Parto há 4 meses.',
+    alergias: 'Nega.',
+    medicamentos: '',
+    procedimentosAnteriores: '',
+    observacoes: 'Aguardar fim da amamentação para toxina e ácidos.',
+    flags: { lactante: true },
+    fitzpatrick: 'IV'
   }
+}
+
+// Mesmo critério de clinicalAlerts() no app (resumo gravado na ficha)
+const FLAG_LABELS = { herpes: 'Histórico de herpes', lactante: 'Lactante', gestante: 'Gestante', anticoagulante: 'Usa anticoagulante' }
+for (const [pid, a] of Object.entries(ANAMNESE)) {
+  const alerts = []
+  if (a.alergias && !/^\s*(n[aã]o|nega|nenhum)/i.test(a.alergias)) alerts.push(`Alergia: ${a.alergias.replace(/\.$/, '')}`)
+  for (const [k, v] of Object.entries(a.flags)) if (v) alerts.push(FLAG_LABELS[k])
+  PATIENTS.find((p) => p.id === pid).clinicalAlerts = alerts
 }
 
 const PROCEDURES = {
   p1: [
-    { id: 'pr1', name: 'Toxina botulínica', date: dateKey(-25), area: 'Face', status: 'Concluído' },
-    { id: 'pr2', name: 'Preenchimento labial', date: dateKey(-95), area: 'Lábios', status: 'Concluído' },
-    { id: 'pr3', name: 'Bioestimulador de colágeno', date: dateKey(-270), area: 'Face', status: 'Concluído' },
+    { id: 'pr1', name: 'Toxina botulínica', date: dateKey(-25), area: 'Glabela, frontal e periocular', product: 'Botox® 100U', lot: 'C7543C3', quantity: 50, unit: 'U', technique: '5 pontos glabela, 6 frontal, 3 por lado periocular.', postCare: 'Não deitar por 4h; evitar atividade física por 24h.', status: 'Concluído', professional: 'Dra. Bárbara' },
+    { id: 'pr2', name: 'Preenchimento labial', date: dateKey(-95), area: 'Lábios', product: 'Juvéderm® Volbella', lot: 'V30A2154', quantity: 1, unit: 'seringa(s)', technique: 'Cânula 25G, contorno e projeção.', postCare: 'Compressa fria nas primeiras 24h.', status: 'Concluído', professional: 'Dra. Bárbara' },
+    { id: 'pr3', name: 'Bioestimulador de colágeno', date: dateKey(-270), area: 'Face', product: 'Sculptra®', lot: 'SC2209', quantity: 1, unit: 'ampola(s)', status: 'Concluído', professional: 'Dra. Bárbara' },
     { id: 'pr4', name: 'Skinbooster', date: dateKey(-370), area: 'Rosto', status: 'Concluído' },
     { id: 'pr5', name: 'Protocolo de colágeno', date: dateKey(0), area: 'Face', status: 'Em andamento' }
   ],
   p3: [
-    { id: 'pr1', name: 'Preenchimento labial', date: dateKey(-30), area: 'Lábios', status: 'Concluído' }
+    { id: 'pr1', name: 'Preenchimento labial', date: dateKey(-30), area: 'Lábios', product: 'Restylane® Kysse', lot: 'RK11872', quantity: 1, unit: 'seringa(s)', status: 'Concluído', professional: 'Dra. Bárbara' }
+  ],
+  p7: [
+    { id: 'pr1', name: 'Toxina botulínica', date: dateKey(-115), area: 'Glabela e frontal', product: 'Dysport® 300U', lot: 'D20331', quantity: 60, unit: 'U', status: 'Concluído', professional: 'Dra. Bárbara' },
+    { id: 'pr2', name: 'Preenchimento labial', date: dateKey(-300), area: 'Lábios', product: 'Juvéderm® Volbella', lot: 'V29B1101', quantity: 1, unit: 'seringa(s)', status: 'Concluído', professional: 'Dra. Bárbara' }
+  ],
+  p8: [
+    { id: 'pr1', name: 'Skinbooster', date: dateKey(-35), area: 'Face e pescoço', product: 'Profhilo®', lot: 'PH4410', quantity: 2, unit: 'ml', status: 'Concluído', professional: 'Dra. Bárbara' }
   ]
+}
+
+const EVOLUTIONS = {
+  p1: [
+    { id: 'e1', date: dateKey(-10), text: 'Retorno 15 dias pós-toxina: resultado simétrico, sem intercorrências. Paciente satisfeita.', createdByName: 'Dra. Bárbara' },
+    { id: 'e2', date: dateKey(-80), text: 'Retorno pós-preenchimento: leve edema residual à esquerda, orientada compressa fria. Reavaliar em 15 dias.', createdByName: 'Dra. Bárbara' }
+  ]
+}
+
+// ---- Vendas ----
+const CATALOG = [
+  { id: 'c01', name: 'Toxina botulínica', category: 'Procedimento', price: 2800, durationMin: 30, maintenanceDays: 120 },
+  { id: 'c02', name: 'Preenchimento labial', category: 'Procedimento', price: 1900, durationMin: 60, maintenanceDays: 270 },
+  { id: 'c03', name: 'Skinbooster', category: 'Procedimento', price: 680, durationMin: 45, maintenanceDays: 30 },
+  { id: 'c04', name: 'Bioestimulador de colágeno', category: 'Procedimento', price: 2400, durationMin: 60, maintenanceDays: 90 },
+  { id: 'c05', name: 'Fios de PDO', category: 'Procedimento', price: 3200, durationMin: 60, maintenanceDays: 180 },
+  { id: 'c06', name: 'Microagulhamento', category: 'Procedimento', price: 500, durationMin: 60, maintenanceDays: 30 },
+  { id: 'c07', name: 'Protocolo de colágeno', category: 'Procedimento', price: 2925, durationMin: 60, maintenanceDays: 90 },
+  { id: 'c08', name: 'Consulta de avaliação', category: 'Consulta', price: 450, durationMin: 45 },
+  { id: 'c09', name: 'Pacote bioestimulador (3 sessões)', category: 'Pacote', price: 6000, sessions: 3, durationMin: 60 },
+  { id: 'c10', name: 'Pacote limpeza de pele (4 sessões)', category: 'Pacote', price: 900, sessions: 4, durationMin: 60 },
+  { id: 'c11', name: 'Kit dermocosméticos pós-procedimento', category: 'Produto', price: 380 }
+]
+
+const QUOTES = [
+  {
+    id: 'qFERNANDA1', leadId: 'l4', clientName: 'Fernanda Lima', clientPhone: '(51) 99165-4444', status: 'Enviado', sentDaysAgo: 5,
+    items: [
+      { catalogId: 'c01', name: 'Toxina botulínica', category: 'Procedimento', qty: 1, unitPrice: 2800, sessions: 1 },
+      { catalogId: 'c03', name: 'Skinbooster', category: 'Procedimento', qty: 1, unitPrice: 680, sessions: 1 }
+    ],
+    discount: 280, installments: 3, validDays: 10, notes: 'Inclui retorno de 15 dias sem custo.'
+  },
+  {
+    id: 'qPATRICIA1', leadId: 'l5', clientName: 'Patrícia Nunes', clientPhone: '(51) 99321-8080', status: 'Rascunho',
+    items: [{ catalogId: 'c09', name: 'Pacote bioestimulador (3 sessões)', category: 'Pacote', qty: 1, unitPrice: 6000, sessions: 3 }],
+    discount: 600, installments: 6, validDays: 15, notes: ''
+  },
+  {
+    id: 'qRAFAELA1', patientId: 'p1', clientName: 'Rafaela Costa', clientPhone: '(51) 99876-5432', status: 'Aprovado', sentDaysAgo: 30, decidedDaysAgo: 28,
+    items: [{ catalogId: 'c09', name: 'Pacote bioestimulador (3 sessões)', category: 'Pacote', qty: 1, unitPrice: 6000, sessions: 3 }],
+    discount: 0, installments: 3, validDays: -10, notes: ''
+  },
+  {
+    id: 'qCAMILA1', patientId: 'p2', clientName: 'Camila Rocha', clientPhone: '(51) 98877-6544', status: 'Recusado', sentDaysAgo: 12, decidedDaysAgo: 9, rejectReason: 'Preço',
+    items: [{ catalogId: 'c05', name: 'Fios de PDO', category: 'Procedimento', qty: 1, unitPrice: 3200, sessions: 1 }],
+    discount: 0, installments: 1, validDays: 3, notes: ''
+  }
+]
+
+const PACKAGES = {
+  p1: [{ id: 'pk1', name: 'Pacote bioestimulador (3 sessões)', totalSessions: 3, usedSessions: 1, usage: [{ date: dateKey(-20), appointmentId: null }], quoteId: 'qRAFAELA1', catalogId: 'c09' }]
 }
 
 const PHOTOS = {
@@ -384,10 +497,16 @@ async function seedPatients() {
     batch.set(db.doc(`patients/${id}`), { ...data, createdAt: Timestamp.now() })
   }
   for (const [pid, data] of Object.entries(ANAMNESE)) {
-    batch.set(db.doc(`patients/${pid}/anamnese/main`), data)
+    batch.set(db.doc(`patients/${pid}/anamnese/main`), { ...data, updatedAt: hoursAgo(24 * 30), updatedBy: "u-admin", updatedByName: "Dra. Bárbara" })
   }
   for (const [pid, list] of Object.entries(PROCEDURES)) {
     for (const { id, ...data } of list) batch.set(db.doc(`patients/${pid}/procedures/${id}`), data)
+  }
+  for (const [pid, list] of Object.entries(EVOLUTIONS)) {
+    for (const { id, ...data } of list) batch.set(db.doc(`patients/${pid}/evolutions/${id}`), { ...data, createdAt: Timestamp.now() })
+  }
+  for (const [pid, list] of Object.entries(PACKAGES)) {
+    for (const { id, ...data } of list) batch.set(db.doc(`patients/${pid}/packages/${id}`), { ...data, createdAt: Timestamp.now() })
   }
   for (const [pid, list] of Object.entries(PHOTOS)) {
     for (const { id, ...data } of list) batch.set(db.doc(`patients/${pid}/photos/${id}`), data)
@@ -461,6 +580,31 @@ async function seedActivities() {
   await batch.commit()
 }
 
+async function seedSales() {
+  const batch = db.batch()
+  for (const { id, ...c } of CATALOG) {
+    batch.set(db.doc(`catalog/${id}`), { sessions: 1, maintenanceDays: null, durationMin: null, description: '', active: true, ...c, createdAt: Timestamp.now() })
+  }
+  for (const { id, sentDaysAgo, decidedDaysAgo, validDays, ...q } of QUOTES) {
+    const subtotal = q.items.reduce((s, i) => s + i.unitPrice * i.qty, 0)
+    batch.set(db.doc(`quotes/${id}`), {
+      leadId: null,
+      patientId: null,
+      rejectReason: null,
+      appointmentId: null,
+      ...q,
+      subtotal,
+      total: subtotal - q.discount,
+      validUntil: dateKey(validDays),
+      sentAt: sentDaysAgo != null ? hoursAgo(24 * sentDaysAgo) : null,
+      decidedAt: decidedDaysAgo != null ? hoursAgo(24 * decidedDaysAgo) : null,
+      createdBy: 'u-admin',
+      createdAt: hoursAgo(24 * ((sentDaysAgo ?? 0) + 1))
+    })
+  }
+  await batch.commit()
+}
+
 async function seedFinance() {
   const items = buildTransactions()
   for (let i = 0; i < items.length; i += 400) {
@@ -493,7 +637,7 @@ async function seedNotifications() {
 
 async function main() {
   console.log(`Populando emuladores (projeto ${PROJECT_ID})...`)
-  for (const c of ['users', 'patients', 'appointments', 'leads', 'payments', 'commissions', 'transactions', 'settings']) {
+  for (const c of ['users', 'patients', 'appointments', 'leads', 'payments', 'commissions', 'transactions', 'settings', 'catalog', 'quotes']) {
     await clearCollection(c)
   }
   await seedUsers()
@@ -502,6 +646,7 @@ async function main() {
   await seedLeads()
   await seedActivities()
   await seedFinance()
+  await seedSales()
   await seedNotifications()
   console.log('Pronto. Login: admin@afrodite.com / 123456')
 }

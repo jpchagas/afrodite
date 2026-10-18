@@ -17,7 +17,7 @@ const TABS = [
 ]
 
 // Telas acessadas a partir do menu "Mais" mantêm essa aba destacada
-const MAIS_ROUTES = ['/financeiro']
+const MAIS_ROUTES = ['/financeiro', '/vendas']
 
 function NavIcon({ children }) {
   return (

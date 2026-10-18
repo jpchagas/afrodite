@@ -22,6 +22,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  collectionGroup,
   addDoc,
   setDoc,
   updateDoc,
@@ -298,40 +299,236 @@ export async function getPatientTimeline(id) {
       type: 'procedimento',
       date: parseDateKey(p.date),
       title: p.name,
-      text: [p.area, p.status].filter(Boolean).join(' • ')
+      text: [p.area, p.product, p.status].filter(Boolean).join(' • ')
     }))
   ]
   return items.sort((a, b) => b.date - a.date)
 }
 
+// ---- Clínico: anamnese ----
+
+export const ANAMNESE_TEXT_FIELDS = [
+  { key: 'queixaPrincipal', label: 'Queixa principal' },
+  { key: 'historicoMedico', label: 'Histórico médico' },
+  { key: 'alergias', label: 'Alergias' },
+  { key: 'medicamentos', label: 'Medicamentos em uso' },
+  { key: 'procedimentosAnteriores', label: 'Procedimentos estéticos anteriores' },
+  { key: 'observacoes', label: 'Observações' }
+]
+
+// Condições que contraindicam ou exigem cuidado em procedimentos estéticos
+export const ANAMNESE_FLAGS = [
+  { key: 'gestante', label: 'Gestante', critical: true },
+  { key: 'lactante', label: 'Lactante', critical: true },
+  { key: 'anticoagulante', label: 'Usa anticoagulante', critical: true },
+  { key: 'isotretinoina', label: 'Isotretinoína nos últimos 6 meses', critical: true },
+  { key: 'autoimune', label: 'Doença autoimune' },
+  { key: 'diabetes', label: 'Diabetes' },
+  { key: 'hipertensao', label: 'Hipertensão' },
+  { key: 'queloide', label: 'Tendência a queloide' },
+  { key: 'herpes', label: 'Histórico de herpes' },
+  { key: 'marcapasso', label: 'Marcapasso ou implante metálico' },
+  { key: 'fumante', label: 'Fumante' },
+  { key: 'fotossensibilidade', label: 'Fotossensibilidade' }
+]
+
+export const FITZPATRICK = [
+  { value: 'I', label: 'I — muito clara, sempre queima' },
+  { value: 'II', label: 'II — clara, queima com facilidade' },
+  { value: 'III', label: 'III — morena clara' },
+  { value: 'IV', label: 'IV — morena moderada' },
+  { value: 'V', label: 'V — morena escura' },
+  { value: 'VI', label: 'VI — negra' }
+]
+
 const EMPTY_ANAMNESE = {
-  queixaPrincipal: 'Ainda não registrada.',
-  historicoMedico: 'Sem informações registradas.',
-  alergias: 'Não informado.',
-  procedimentosAnteriores: 'Nenhum procedimento anterior registrado.'
+  ...Object.fromEntries(ANAMNESE_TEXT_FIELDS.map((f) => [f.key, ''])),
+  flags: {},
+  fitzpatrick: null
+}
+
+// "Não", "Nega", "Nenhuma"... não contam como alergia
+const NO_ALLERGY = /^\s*(n[aã]o|nega|nenhum|nenhuma|sem|n\/?a|-|—)\b/i
+
+/**
+ * Alertas clínicos derivados da anamnese: [{ label, critical }].
+ * Alergias e condições críticas vêm primeiro.
+ */
+export function clinicalAlerts(anamnese) {
+  if (!anamnese) return []
+  const alerts = []
+  const allergy = (anamnese.alergias || '').trim()
+  if (allergy && !NO_ALLERGY.test(allergy)) alerts.push({ label: `Alergia: ${allergy.replace(/\.$/, '')}`, critical: true })
+  for (const f of ANAMNESE_FLAGS) if (anamnese.flags?.[f.key]) alerts.push({ label: f.label, critical: !!f.critical })
+  return alerts.sort((a, b) => Number(b.critical) - Number(a.critical))
 }
 
 export async function getPatientAnamnese(id) {
   const snap = await getDoc(doc(db, 'patients', id, 'anamnese', 'main'))
-  return snap.exists() ? { ...EMPTY_ANAMNESE, ...snap.data() } : { ...EMPTY_ANAMNESE }
+  const data = snap.exists() ? snap.data() : {}
+  return { ...EMPTY_ANAMNESE, ...data, flags: { ...(data.flags || {}) }, updatedAt: toDate(data.updatedAt) }
 }
 
+// Salva a anamnese guardando a versão anterior (histórico para auditoria) e
+// atualiza os alertas resumidos na ficha da paciente (`clinicalAlerts`).
 export async function updatePatientAnamnese(id, data) {
-  const { queixaPrincipal, historicoMedico, alergias, procedimentosAnteriores } = data
-  const payload = { queixaPrincipal, historicoMedico, alergias, procedimentosAnteriores }
-  await setDoc(
-    doc(db, 'patients', id, 'anamnese', 'main'),
-    { ...payload, updatedAt: serverTimestamp() },
-    { merge: true }
-  )
-  return payload
+  const payload = {
+    ...Object.fromEntries(ANAMNESE_TEXT_FIELDS.map((f) => [f.key, (data[f.key] || '').trim()])),
+    flags: Object.fromEntries(ANAMNESE_FLAGS.map((f) => [f.key, !!data.flags?.[f.key]])),
+    fitzpatrick: data.fitzpatrick || null
+  }
+  const ref = doc(db, 'patients', id, 'anamnese', 'main')
+  const current = await getDoc(ref)
+  const user = auth.currentUser
+  const batch = writeBatch(db)
+  if (current.exists()) {
+    batch.set(doc(collection(db, 'patients', id, 'anamneseVersions')), {
+      ...current.data(),
+      versionedAt: serverTimestamp()
+    })
+  }
+  batch.set(ref, {
+    ...payload,
+    updatedAt: serverTimestamp(),
+    updatedBy: user?.uid || null,
+    updatedByName: user?.displayName || user?.email || null
+  })
+  batch.update(doc(db, 'patients', id), { clinicalAlerts: clinicalAlerts(payload).map((a) => a.label) })
+  await batch.commit()
+  return { ...payload, updatedAt: new Date(), updatedByName: user?.displayName || user?.email || null }
+}
+
+export async function getAnamneseVersions(id) {
+  const items = await list(query(collection(db, 'patients', id, 'anamneseVersions'), orderBy('versionedAt', 'desc')))
+  return items.map((v) => ({ ...EMPTY_ANAMNESE, ...v, savedAt: toDate(v.updatedAt) || toDate(v.versionedAt) }))
+}
+
+// ---- Clínico: procedimentos e evolução ----
+
+export const PROCEDURE_UNITS = ['U', 'ml', 'seringa(s)', 'fio(s)', 'ampola(s)', 'sessão(ões)']
+
+function toProcedure(p) {
+  return { ...p, dateKey: p.date, date: formatDateKey(p.date) }
 }
 
 export async function getPatientProcedures(id) {
   const procedures = await list(
     query(collection(db, 'patients', id, 'procedures'), orderBy('date', 'desc'))
   )
-  return procedures.map((p) => ({ ...p, dateKey: p.date, date: formatDateKey(p.date) }))
+  return procedures.map(toProcedure)
+}
+
+/**
+ * Registra um procedimento realizado (produto, lote, quantidade, áreas,
+ * técnica, cuidados pós). Atualiza a última consulta da paciente e, com
+ * `returnInDays`, o próximo retorno (quando for o mais próximo).
+ */
+export async function createProcedure(patientId, fields) {
+  const date = fields.date || todayKey()
+  const user = auth.currentUser
+  const data = {
+    name: fields.name.trim(),
+    date,
+    area: (fields.areas || '').trim(),
+    product: (fields.product || '').trim(),
+    lot: (fields.lot || '').trim(),
+    quantity: fields.quantity ? Number(String(fields.quantity).replace(',', '.')) : null,
+    unit: fields.unit || null,
+    technique: (fields.technique || '').trim(),
+    postCare: (fields.postCare || '').trim(),
+    notes: (fields.notes || '').trim(),
+    status: fields.status || 'Concluído',
+    appointmentId: fields.appointmentId || null,
+    professional: user?.displayName || user?.email || null,
+    createdBy: user?.uid || null,
+    createdAt: serverTimestamp()
+  }
+  const patient = await getOrThrow(doc(db, 'patients', patientId), 'Paciente não encontrado')
+  const ref = doc(collection(db, 'patients', patientId, 'procedures'))
+  const patientChanges = {}
+  if (data.status === 'Concluído' && (!patient.lastVisit || date >= patient.lastVisit)) {
+    patientChanges.lastVisit = date
+    patientChanges.lastVisitLabel = data.name
+  }
+  const days = Number(fields.returnInDays)
+  if (days > 0) {
+    const returnKey = toDateKey(addDays(parseDateKey(date), days))
+    if (!patient.nextReturn || patient.nextReturn < todayKey() || returnKey < patient.nextReturn) {
+      patientChanges.nextReturn = returnKey
+      patientChanges.nextReturnLabel = `Retorno • ${data.name}`
+    }
+  }
+  const batch = writeBatch(db)
+  batch.set(ref, data)
+  if (Object.keys(patientChanges).length) batch.update(doc(db, 'patients', patientId), patientChanges)
+  await batch.commit()
+  return toProcedure({ id: ref.id, ...data })
+}
+
+const PROCEDURE_EDITABLE = ['name', 'date', 'area', 'product', 'lot', 'quantity', 'unit', 'technique', 'postCare', 'notes', 'status']
+
+export async function updateProcedure(patientId, procedureId, fields) {
+  const changes = pick({ ...fields, area: fields.areas ?? fields.area }, PROCEDURE_EDITABLE)
+  if ('quantity' in changes) changes.quantity = changes.quantity ? Number(String(changes.quantity).replace(',', '.')) : null
+  for (const k of ['name', 'area', 'product', 'lot', 'technique', 'postCare', 'notes']) if (k in changes) changes[k] = (changes[k] || '').trim()
+  const ref = doc(db, 'patients', patientId, 'procedures', procedureId)
+  await updateDoc(ref, { ...changes, updatedAt: serverTimestamp() })
+  return toProcedure(withId(await getDoc(ref)))
+}
+
+export async function createEvolution(patientId, { text, date, appointmentId = null }) {
+  const user = auth.currentUser
+  const data = {
+    text: text.trim(),
+    date: date || todayKey(),
+    appointmentId,
+    createdBy: user?.uid || null,
+    createdByName: user?.displayName || user?.email || null,
+    createdAt: serverTimestamp()
+  }
+  const ref = await addDoc(collection(db, 'patients', patientId, 'evolutions'), data)
+  return { id: ref.id, ...data, createdAt: new Date() }
+}
+
+/**
+ * Prontuário: procedimentos e notas de evolução em ordem cronológica
+ * (mais recente primeiro). Itens: { kind: 'procedimento' | 'evolucao', ... }
+ */
+export async function getClinicalRecord(patientId) {
+  const [procedures, evolutions] = await Promise.all([
+    getPatientProcedures(patientId),
+    list(collection(db, 'patients', patientId, 'evolutions'))
+  ])
+  const items = [
+    ...procedures.map((p) => ({ ...p, kind: 'procedimento', sortKey: `${p.dateKey}` })),
+    ...evolutions.map((e) => {
+      const createdAt = toDate(e.createdAt)
+      return { ...e, kind: 'evolucao', createdAt, dateKey: e.date, date: formatDateKey(e.date), sortKey: `${e.date}` }
+    })
+  ]
+  return items.sort((a, b) => b.sortKey.localeCompare(a.sortKey) || (b.createdAt || 0) - (a.createdAt || 0))
+}
+
+// ---- Pacotes de sessões ----
+
+function toPackage(p) {
+  const remaining = Math.max(0, (p.totalSessions || 0) - (p.usedSessions || 0))
+  return { ...p, remaining, status: remaining === 0 ? 'Concluído' : 'Ativo', createdAt: toDate(p.createdAt) }
+}
+
+export async function getPatientPackages(patientId) {
+  const items = await list(collection(db, 'patients', patientId, 'packages'))
+  return items.map(toPackage).sort((a, b) => b.remaining - a.remaining || (b.createdAt || 0) - (a.createdAt || 0))
+}
+
+// Usa uma sessão do pacote (ex.: ao realizar o atendimento)
+export async function consumePackageSession(patientId, packageId, { appointmentId = null } = {}) {
+  const ref = doc(db, 'patients', patientId, 'packages', packageId)
+  const pkg = toPackage(await getOrThrow(ref, 'Pacote não encontrado'))
+  if (pkg.remaining <= 0) throw new Error('Todas as sessões deste pacote já foram usadas.')
+  const usage = [...(pkg.usage || []), { date: todayKey(), appointmentId }]
+  await updateDoc(ref, { usedSessions: (pkg.usedSessions || 0) + 1, usage })
+  return toPackage({ ...pkg, usedSessions: (pkg.usedSessions || 0) + 1, usage })
 }
 
 export async function getPatientPhotos(id) {
@@ -1054,6 +1251,319 @@ export async function sendLeadMessage(id, { text, attachment = null }) {
     await batch.commit().catch(() => {})
   }
   return toMessage({ id: ref.id, ...data, createdAt: new Date() })
+}
+
+// ---- Vendas: catálogo ----
+
+export const CATALOG_CATEGORIES = ['Procedimento', 'Consulta', 'Pacote', 'Produto']
+
+function toCatalogItem(c) {
+  return { ...c, sessions: c.sessions || 1, active: c.active !== false }
+}
+
+export async function getCatalog({ activeOnly = false } = {}) {
+  const items = (await list(query(collection(db, 'catalog'), orderBy('name')))).map(toCatalogItem)
+  return activeOnly ? items.filter((c) => c.active) : items
+}
+
+// Cria (sem id) ou atualiza (com id) um item do catálogo
+export async function saveCatalogItem({ id, name, category, price, sessions, durationMin, maintenanceDays, description, active = true }) {
+  const data = {
+    name: name.trim(),
+    category: category || 'Procedimento',
+    price: Number(price) || 0,
+    sessions: category === 'Pacote' ? Math.max(1, Number(sessions) || 1) : 1,
+    durationMin: Number(durationMin) || null,
+    maintenanceDays: Number(maintenanceDays) || null,
+    description: (description || '').trim(),
+    active: !!active,
+    updatedAt: serverTimestamp()
+  }
+  if (!data.name) throw new Error('Informe o nome.')
+  if (id) {
+    await updateDoc(doc(db, 'catalog', id), data)
+    return toCatalogItem({ id, ...data })
+  }
+  const ref = await addDoc(collection(db, 'catalog'), { ...data, createdAt: serverTimestamp() })
+  return toCatalogItem({ id: ref.id, ...data })
+}
+
+// ---- Vendas: orçamentos ----
+// `quotes`: itens do catálogo, desconto, parcelas e validade. Fluxo:
+// Rascunho → Enviado → Aprovado | Recusado (Expirado é derivado da validade).
+
+export const QUOTE_STATUSES = ['Rascunho', 'Enviado', 'Aprovado', 'Recusado']
+
+function quoteTotals(items, discount) {
+  const subtotal = items.reduce((s, i) => s + (Number(i.unitPrice) || 0) * (Number(i.qty) || 1), 0)
+  const d = Math.min(Math.max(Number(discount) || 0, 0), subtotal)
+  return { subtotal: Math.round(subtotal * 100) / 100, discount: Math.round(d * 100) / 100, total: Math.round((subtotal - d) * 100) / 100 }
+}
+
+function toQuote(q) {
+  const expired = q.status === 'Enviado' && q.validUntil && q.validUntil < todayKey()
+  return {
+    ...q,
+    code: q.id ? q.id.slice(0, 5).toUpperCase() : '',
+    displayStatus: expired ? 'Expirado' : q.status,
+    createdAt: toDate(q.createdAt),
+    sentAt: toDate(q.sentAt),
+    decidedAt: toDate(q.decidedAt)
+  }
+}
+
+export async function getQuotes({ leadId, patientId } = {}) {
+  let q = collection(db, 'quotes')
+  if (leadId) q = query(q, where('leadId', '==', leadId))
+  else if (patientId) q = query(q, where('patientId', '==', patientId))
+  const items = (await list(q)).map(toQuote)
+  return items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+}
+
+export async function getQuote(id) {
+  return toQuote(await getOrThrow(doc(db, 'quotes', id), 'Orçamento não encontrado'))
+}
+
+function cleanItems(items) {
+  return items
+    .filter((i) => i.name?.trim())
+    .map((i) => ({
+      catalogId: i.catalogId || null,
+      name: i.name.trim(),
+      category: i.category || 'Procedimento',
+      qty: Math.max(1, Number(i.qty) || 1),
+      unitPrice: Math.round((Number(i.unitPrice) || 0) * 100) / 100,
+      sessions: i.category === 'Pacote' ? Math.max(1, Number(i.sessions) || 1) : 1
+    }))
+}
+
+/**
+ * Cria ou atualiza (com `id`) um orçamento. O cliente é um lead ou uma
+ * paciente: { leadId | patientId, clientName, clientPhone }.
+ */
+export async function saveQuote({ id, leadId = null, patientId = null, clientName, clientPhone, items, discount, installments, validUntil, notes, appointmentId = null }) {
+  const clean = cleanItems(items || [])
+  if (!clean.length) throw new Error('Adicione pelo menos um item.')
+  const totals = quoteTotals(clean, discount)
+  const data = {
+    leadId,
+    patientId,
+    clientName: (clientName || '').trim(),
+    clientPhone: (clientPhone || '').trim(),
+    items: clean,
+    ...totals,
+    installments: Math.max(1, Math.min(12, Number(installments) || 1)),
+    validUntil: validUntil || toDateKey(addDays(new Date(), 15)),
+    notes: (notes || '').trim(),
+    appointmentId,
+    updatedAt: serverTimestamp()
+  }
+  if (id) {
+    const current = await getOrThrow(doc(db, 'quotes', id), 'Orçamento não encontrado')
+    if (current.status === 'Aprovado') throw new Error('Orçamentos aprovados não podem ser alterados.')
+    await updateDoc(doc(db, 'quotes', id), data)
+    return getQuote(id)
+  }
+  const ref = doc(collection(db, 'quotes'))
+  const batch = writeBatch(db)
+  batch.set(ref, { ...data, status: 'Rascunho', createdBy: currentUid(), createdAt: serverTimestamp() })
+  const target = leadId ? ['leads', leadId] : patientId ? ['patients', patientId] : null
+  if (target) batch.set(activityRef(...target), activityData('proposta', `Orçamento criado • ${formatMoney(totals.total)}`, { quoteId: ref.id }))
+  await batch.commit()
+  return getQuote(ref.id)
+}
+
+function formatMoney(v) {
+  return (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+// Texto do orçamento para enviar pelo WhatsApp
+export function quoteShareText(quote) {
+  const first = (quote.clientName || '').split(' ')[0]
+  const lines = [
+    `Olá${first ? `, ${first}` : ''}! Segue o seu orçamento:`,
+    '',
+    ...quote.items.map((i) => `• ${i.name}${i.qty > 1 ? ` (${i.qty}x)` : ''}${i.category === 'Pacote' ? ` — ${i.sessions * i.qty} sessões` : ''}: ${formatMoney(i.unitPrice * i.qty)}`),
+    ''
+  ]
+  if (quote.discount > 0) lines.push(`Desconto: − ${formatMoney(quote.discount)}`)
+  lines.push(`*Total: ${formatMoney(quote.total)}*${quote.installments > 1 ? ` (até ${quote.installments}x de ${formatMoney(quote.total / quote.installments)})` : ''}`)
+  lines.push(`Válido até ${formatDateKey(quote.validUntil)}.`)
+  if (quote.notes) lines.push('', quote.notes)
+  lines.push('', 'Qualquer dúvida, estamos à disposição!')
+  return lines.join('\n')
+}
+
+export function quoteWhatsAppUrl(quote) {
+  let digits = (quote.clientPhone || '').replace(/\D/g, '')
+  if (digits && !digits.startsWith('55')) digits = `55${digits}`
+  return `https://wa.me/${digits}?text=${encodeURIComponent(quoteShareText(quote))}`
+}
+
+// Marca como enviado. Em leads: etapa "Proposta" e valor da proposta = total.
+export async function markQuoteSent(id) {
+  const quote = await getQuote(id)
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'quotes', id), { status: quote.status === 'Rascunho' ? 'Enviado' : quote.status, sentAt: serverTimestamp() })
+  if (quote.leadId) {
+    const lead = await getOrThrow(doc(db, 'leads', quote.leadId), 'Lead não encontrado')
+    const changes = { proposalValue: quote.total }
+    if (['Novo', 'Em contato', 'Qualificado'].includes(lead.status)) {
+      changes.status = 'Proposta'
+      batch.set(activityRef('leads', quote.leadId), activityData('status', `Movido de "${lead.status}" para "Proposta"`))
+    }
+    batch.update(doc(db, 'leads', quote.leadId), changes)
+  }
+  const target = quote.leadId ? ['leads', quote.leadId] : quote.patientId ? ['patients', quote.patientId] : null
+  if (target) batch.set(activityRef(...target), activityData('proposta', `Orçamento enviado • ${formatMoney(quote.total)}`, { quoteId: id }))
+  await batch.commit()
+  return getQuote(id)
+}
+
+/**
+ * Aprova o orçamento (venda fechada):
+ * - lead ainda sem ficha → converte em paciente;
+ * - lança as receitas no Financeiro (parcelas mensais a partir de `firstDueDate`;
+ *   `paid` marca a 1ª como recebida);
+ * - cria os pacotes de sessões dos itens da categoria Pacote.
+ */
+export async function approveQuote(id, { firstDueDate, paid = false, method = null } = {}) {
+  const quote = await getQuote(id)
+  if (quote.status === 'Aprovado') throw new Error('Este orçamento já foi aprovado.')
+  let patientId = quote.patientId
+  if (!patientId && quote.leadId) {
+    const lead = await getOrThrow(doc(db, 'leads', quote.leadId), 'Lead não encontrado')
+    patientId = lead.patientId || (await convertLeadToPatient(quote.leadId, { name: lead.name, phone: lead.phone, email: lead.email })).patientId
+  }
+  if (!patientId) throw new Error('Orçamento sem paciente vinculada.')
+
+  const hasPackage = quote.items.some((i) => i.category === 'Pacote')
+  await createTransaction({
+    type: 'receita',
+    description: `Orçamento ${quote.code} — ${quote.items.map((i) => i.name).join(', ')}`.slice(0, 120),
+    category: hasPackage ? 'Pacote' : quote.items[0].category === 'Consulta' ? 'Consulta' : 'Procedimento',
+    amount: quote.total,
+    dueDate: firstDueDate || todayKey(),
+    paid,
+    method,
+    installments: quote.installments,
+    patientId,
+    patientName: quote.clientName,
+    appointmentId: quote.appointmentId || null
+  })
+
+  const batch = writeBatch(db)
+  for (const item of quote.items.filter((i) => i.category === 'Pacote')) {
+    batch.set(doc(collection(db, 'patients', patientId, 'packages')), {
+      name: item.name,
+      totalSessions: item.sessions * item.qty,
+      usedSessions: 0,
+      usage: [],
+      quoteId: id,
+      catalogId: item.catalogId || null,
+      createdAt: serverTimestamp()
+    })
+  }
+  batch.update(doc(db, 'quotes', id), { status: 'Aprovado', patientId, decidedAt: serverTimestamp() })
+  batch.set(activityRef('patients', patientId), activityData('proposta', `Orçamento aprovado • ${formatMoney(quote.total)}`, { quoteId: id }))
+  await batch.commit()
+  return { patientId, quote: await getQuote(id) }
+}
+
+export async function rejectQuote(id, reason) {
+  const quote = await getQuote(id)
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'quotes', id), { status: 'Recusado', rejectReason: reason || null, decidedAt: serverTimestamp() })
+  const target = quote.leadId ? ['leads', quote.leadId] : quote.patientId ? ['patients', quote.patientId] : null
+  if (target) batch.set(activityRef(...target), activityData('perdido', `Orçamento recusado${reason ? ` • ${reason}` : ''}`, { quoteId: id }))
+  await batch.commit()
+  return getQuote(id)
+}
+
+// ---- Vendas: resumo e oportunidades ----
+
+export async function getSalesSummary(monthKey = currentMonthKey()) {
+  const quotes = await getQuotes()
+  const inMonth = (d) => d && toDateKey(d).slice(0, 7) === monthKey
+  const sent = quotes.filter((q) => inMonth(q.sentAt))
+  const approved = quotes.filter((q) => q.status === 'Aprovado' && inMonth(q.decidedAt))
+  const rejected = quotes.filter((q) => q.status === 'Recusado' && inMonth(q.decidedAt))
+  const decided = approved.length + rejected.length
+  const open = quotes.filter((q) => q.displayStatus === 'Enviado')
+  return {
+    quotes,
+    sentCount: sent.length,
+    approvedCount: approved.length,
+    approvedValue: approved.reduce((s, q) => s + q.total, 0),
+    conversionPct: decided ? Math.round((approved.length / decided) * 100) : null,
+    openCount: open.length,
+    openValue: open.reduce((s, q) => s + q.total, 0)
+  }
+}
+
+const normalizeName = (t = '') => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+
+/**
+ * Oportunidades de venda:
+ * - manutenção: pacientes cujo último procedimento de um item com
+ *   `maintenanceDays` vence em até 15 dias (ou já venceu) e sem agendamento futuro;
+ * - orçamentos enviados há mais de 3 dias aguardando resposta.
+ */
+export async function getSalesOpportunities() {
+  const today = todayKey()
+  const [catalog, patients, procedures, futureAppts, quotes] = await Promise.all([
+    getCatalog({ activeOnly: true }),
+    list(collection(db, 'patients')),
+    getDocs(collectionGroup(db, 'procedures')),
+    list(query(collection(db, 'appointments'), where('dateKey', '>=', today))),
+    getQuotes()
+  ])
+  const booked = new Set(futureAppts.filter((a) => a.status !== 'Concluído').map((a) => a.patientId))
+  const maintained = catalog.filter((c) => c.maintenanceDays > 0)
+  const lastByKey = {}
+  for (const snap of procedures.docs) {
+    const p = snap.data()
+    const patientId = snap.ref.parent.parent.id
+    const item = maintained.find((c) => normalizeName(p.name).includes(normalizeName(c.name)) || normalizeName(c.name).includes(normalizeName(p.name)))
+    if (!item || p.status !== 'Concluído') continue
+    const key = `${patientId}|${item.id}`
+    if (!lastByKey[key] || p.date > lastByKey[key].date) lastByKey[key] = { date: p.date, item, patientId }
+  }
+  const horizon = toDateKey(addDays(new Date(), 15))
+  const maintenance = Object.values(lastByKey)
+    .map(({ date, item, patientId }) => {
+      const patient = patients.find((x) => x.id === patientId)
+      const dueDate = toDateKey(addDays(parseDateKey(date), item.maintenanceDays))
+      return {
+        id: `${patientId}-${item.id}`,
+        patientId,
+        patientName: patient?.name || 'Paciente',
+        phone: patient?.phone || '',
+        procedure: item.name,
+        catalogItem: item,
+        lastDate: date,
+        dueDate,
+        overdueDays: Math.round((parseDateKey(today) - parseDateKey(dueDate)) / 86_400_000),
+        booked: booked.has(patientId)
+      }
+    })
+    .filter((o) => o.dueDate <= horizon && !o.booked)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+
+  const threeDaysAgo = addDays(new Date(), -3)
+  const awaiting = quotes
+    .filter((q) => q.displayStatus === 'Enviado' && q.sentAt && q.sentAt < threeDaysAgo)
+    .sort((a, b) => a.sentAt - b.sentAt)
+  return { maintenance, awaiting }
+}
+
+// Mensagem de manutenção para o WhatsApp da paciente
+export function maintenanceWhatsAppUrl(o) {
+  let digits = (o.phone || '').replace(/\D/g, '')
+  if (digits && !digits.startsWith('55')) digits = `55${digits}`
+  const first = o.patientName.split(' ')[0]
+  const text = `Olá, ${first}! Tudo bem? Já está chegando a hora da manutenção do seu ${o.procedure.toLowerCase()}. Quer que eu reserve um horário para você?`
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`
 }
 
 // ---- Arquivos (Firebase Storage) ----

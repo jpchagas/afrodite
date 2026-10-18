@@ -3,13 +3,14 @@ import { Box, Skeleton, Typography } from '@mui/material'
 import ScreenHeader from './ScreenHeader.jsx'
 import PersonAvatar from './PersonAvatar.jsx'
 import StatusChip from './StatusChip.jsx'
+import ClinicalAlerts from './ClinicalAlerts.jsx'
 
 /**
  * Cabeçalho das telas de paciente: botão voltar, título da tela e o resumo
  * da paciente (avatar, nome, idade/CPF, status). `children` vai abaixo
  * (normalmente as abas de seção). Com `error`, o resumo não é exibido.
  */
-export default function PatientHeader({ patient, error, title, onBack, actions, children }) {
+export default function PatientHeader({ patient, error, title, onBack, actions, hideAlerts = false, children }) {
   return (
     <ScreenHeader title={title} back onBack={onBack} actions={actions}>
       {!error && (
@@ -41,6 +42,7 @@ export default function PatientHeader({ patient, error, title, onBack, actions, 
         </Box>
       </Box>
       )}
+      {!error && !hideAlerts && patient?.clinicalAlerts?.length > 0 && <ClinicalAlerts alerts={patient.clinicalAlerts} compact sx={{ mt: 1.5 }} />}
       {children && <Box sx={{ mt: 1.5 }}>{children}</Box>}
     </ScreenHeader>
   )

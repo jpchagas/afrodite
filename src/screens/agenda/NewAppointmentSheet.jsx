@@ -6,7 +6,7 @@ import { friendlyMessage } from '../../utils/errors.js'
 import BottomSheet from '../../components/BottomSheet.jsx'
 import PersonAvatar from '../../components/PersonAvatar.jsx'
 
-const PROCEDURES = [
+const FALLBACK_PROCEDURES = [
   'Consulta de avaliação',
   'Retorno',
   'Toxina botulínica',
@@ -16,10 +16,10 @@ const PROCEDURES = [
   'Protocolo de colágeno'
 ]
 
-function initialForm(defaultDate) {
+function initialForm(defaultDate, defaultProcedure) {
   return {
     patient: null,
-    procedure: '',
+    procedure: defaultProcedure || '',
     dateKey: defaultDate && defaultDate >= todayKey() ? defaultDate : todayKey(),
     time: '09:00',
     durationMin: 60,
@@ -31,16 +31,18 @@ function initialForm(defaultDate) {
  * Formulário de novo agendamento. Com `patient`, a paciente vem fixa
  * (aberto a partir do perfil); sem, escolhe-se na lista.
  */
-export default function NewAppointmentSheet({ open, onClose, onCreated, defaultDate, patient }) {
+export default function NewAppointmentSheet({ open, onClose, onCreated, defaultDate, patient, defaultProcedure }) {
   const [form, setForm] = useState(() => initialForm(defaultDate))
   const [patients, setPatients] = useState(null)
+  const [catalog, setCatalog] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     if (!open) return
-    setForm({ ...initialForm(defaultDate), patient: patient || null })
+    setForm({ ...initialForm(defaultDate, defaultProcedure), patient: patient || null })
     setError(null)
+    afroditeApi.getCatalog({ activeOnly: true }).then((items) => setCatalog(items.filter((c) => c.category !== 'Produto')), () => {})
     if (!patient && !patients) {
       afroditeApi.getPatients().then(setPatients, () => setPatients([]))
     }
@@ -114,9 +116,14 @@ export default function NewAppointmentSheet({ open, onClose, onCreated, defaultD
 
         <Autocomplete
           freeSolo
-          options={PROCEDURES}
+          options={catalog.length ? catalog.map((c) => c.name) : FALLBACK_PROCEDURES}
           inputValue={form.procedure}
-          onInputChange={(_, value) => setForm((prev) => ({ ...prev, procedure: value }))}
+          onInputChange={(_, value) => {
+            // Itens do catálogo trazem a duração padrão
+            const item = catalog.find((c) => c.name === value)
+            const duration = item?.durationMin && afroditeApi.DURATIONS.includes(item.durationMin) ? item.durationMin : null
+            setForm((prev) => ({ ...prev, procedure: value, ...(duration ? { durationMin: duration } : {}) }))
+          }}
           renderInput={(params) => <TextField {...params} label="Procedimento" required />}
         />
 

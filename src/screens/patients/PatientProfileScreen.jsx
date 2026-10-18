@@ -25,14 +25,17 @@ import InsightCard from '../../components/InsightCard.jsx'
 import InfoField from '../../components/InfoField.jsx'
 import { EmptyState, ErrorState, ListSkeleton } from '../../components/StateViews.jsx'
 import { HeaderIconButton } from '../../components/ScreenHeader.jsx'
-import ProceduresList from './partials/ProceduresList.jsx'
+import ClinicalRecordTab from './partials/ClinicalRecordTab.jsx'
+import PackagesCard from './partials/PackagesCard.jsx'
+import QuoteEditorSheet from '../sales/QuoteEditorSheet.jsx'
+import RequestQuoteRoundedIcon from '@mui/icons-material/RequestQuoteRounded'
 import PhotosGallery from './partials/PhotosGallery.jsx'
 import NewAppointmentSheet from '../agenda/NewAppointmentSheet.jsx'
 import ActivityTimeline from '../../components/ActivityTimeline.jsx'
 import LogContactSheet from '../../components/LogContactSheet.jsx'
 import EditPatientSheet from './partials/EditPatientSheet.jsx'
 
-const TABS = ['Resumo', 'Histórico', 'Procedimentos', 'Fotos']
+const TABS = ['Resumo', 'Histórico', 'Prontuário', 'Fotos']
 
 export default function PatientProfileScreen() {
   const { id } = useParams()
@@ -40,12 +43,12 @@ export default function PatientProfileScreen() {
   const toast = useToast()
   const [tab, setTab] = useState(0)
   const [scheduling, setScheduling] = useState(false)
-  const [sheet, setSheet] = useState(null) // 'edit' | 'contact'
+  const [sheet, setSheet] = useState(null) // 'edit' | 'contact' | 'quote'
   const patient = useAsync(() => afroditeApi.getPatient(id), [id])
   const timeline = useAsync(() => afroditeApi.getPatientTimeline(id), [id])
   const finance = useAsync(() => afroditeApi.getPatientTransactions(id), [id])
   const anamnese = useAsync(() => afroditeApi.getPatientAnamnese(id), [id])
-  const procedures = useAsync(() => afroditeApi.getPatientProcedures(id), [id])
+  const packages = useAsync(() => afroditeApi.getPatientPackages(id), [id])
 
   const phoneDigits = patient.data?.phone?.replace(/\D/g, '')
 
@@ -92,6 +95,9 @@ export default function PatientProfileScreen() {
               anamnese={anamnese.data}
               onVerLead={() => navigate(`/leads/${patient.data.leadId}`)}
               finance={finance.data}
+              packages={packages.data}
+              onPackagesChange={packages.setData}
+              onOrcamento={() => setSheet('quote')}
               onVerFinanceiro={() => navigate(`/financeiro?paciente=${id}`)}
               onVerAnamnese={() => navigate(`/pacientes/${id}/anamnese`)}
               onVerFotos={() => setTab(3)}
@@ -101,7 +107,16 @@ export default function PatientProfileScreen() {
             />
           )}
           {tab === 1 && <RelationshipTab state={timeline} onLogContact={() => setSheet('contact')} />}
-          {tab === 2 && <ProceduresList state={procedures} />}
+          {tab === 2 && (
+            <ClinicalRecordTab
+              patientId={id}
+              alerts={patient.data?.clinicalAlerts}
+              onChanged={() => {
+                patient.reload()
+                timeline.reload()
+              }}
+            />
+          )}
           {tab === 3 && <PhotosGallery patientId={id} />}
         </>
       )}
@@ -125,6 +140,12 @@ export default function PatientProfileScreen() {
           timeline.reload()
           toast('Dados atualizados')
         }}
+      />
+      <QuoteEditorSheet
+        open={sheet === 'quote'}
+        onClose={() => setSheet(null)}
+        client={patient.data && { kind: 'patient', id, name: patient.data.name, phone: patient.data.phone }}
+        onSaved={(q) => navigate(`/vendas/orcamentos/${q.id}`)}
       />
       <LogContactSheet
         open={sheet === 'contact'}
@@ -159,7 +180,7 @@ function DateCard({ label, value, caption }) {
 function QuickAction({ icon, label, onClick }) {
   return (
     <Card sx={{ flex: 1 }}>
-      <CardActionArea onClick={onClick} sx={{ py: 2, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+      <CardActionArea onClick={onClick} sx={{ py: 1.75, px: 0.5, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
         <Box sx={{ width: 38, height: 38, borderRadius: '12px', display: 'grid', placeItems: 'center', bgcolor: brand.blush, color: brand.wine }}>
           {icon}
         </Box>
@@ -171,7 +192,7 @@ function QuickAction({ icon, label, onClick }) {
   )
 }
 
-function ResumoTab({ patient, anamnese, finance, onVerFinanceiro, onVerLead, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
+function ResumoTab({ patient, anamnese, finance, packages, onPackagesChange, onOrcamento, onVerFinanceiro, onVerLead, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
 
   if (!patient) {
     return (
@@ -225,6 +246,8 @@ function ResumoTab({ patient, anamnese, finance, onVerFinanceiro, onVerLead, onV
         </Card>
       )}
 
+      <PackagesCard patientId={patient.id} packages={packages} onChange={onPackagesChange} />
+
       <Button fullWidth size="large" variant="outlined" startIcon={<EventAvailableRoundedIcon />} onClick={onAgendar}>
         Agendar atendimento
       </Button>
@@ -249,11 +272,8 @@ function ResumoTab({ patient, anamnese, finance, onVerFinanceiro, onVerLead, onV
       <Stack direction="row" spacing={1.25}>
         <QuickAction icon={<PhotoLibraryRoundedIcon />} label="Fotos" onClick={onVerFotos} />
         <QuickAction icon={<DescriptionRoundedIcon />} label="Prescrições" onClick={onVerPrescricoes} />
-        <QuickAction
-          icon={<FolderRoundedIcon />}
-          label="Documentos"
-          onClick={onVerDocumentos}
-        />
+        <QuickAction icon={<FolderRoundedIcon />} label="Documentos" onClick={onVerDocumentos} />
+        <QuickAction icon={<RequestQuoteRoundedIcon />} label="Orçamento" onClick={onOrcamento} />
       </Stack>
 
       <Box sx={{ pt: 1.25 }}>

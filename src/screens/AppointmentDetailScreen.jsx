@@ -34,6 +34,12 @@ import SectionTitle from '../components/SectionTitle.jsx'
 import { ErrorState } from '../components/StateViews.jsx'
 import TransactionFormSheet from './finance/TransactionFormSheet.jsx'
 import { formatCurrency } from '../utils/format.js'
+import ClinicalAlerts from '../components/ClinicalAlerts.jsx'
+import ProcedureFormSheet from './patients/partials/ProcedureFormSheet.jsx'
+import PackagesCard from './patients/partials/PackagesCard.jsx'
+import QuoteEditorSheet from './sales/QuoteEditorSheet.jsx'
+import SpaRoundedIcon from '@mui/icons-material/SpaRounded'
+import RequestQuoteRoundedIcon from '@mui/icons-material/RequestQuoteRounded'
 
 const PREP_ITEMS = [
   'Confirmar se a paciente está bem',
@@ -71,6 +77,8 @@ export default function AppointmentDetailScreen() {
   const [checked, setChecked] = useState({})
   const [saving, setSaving] = useState(false)
   const [charging, setCharging] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [quoting, setQuoting] = useState(false)
 
   const appt = useAsync(() => afroditeApi.getAppointment(id), [id])
   const patientId = appt.data?.patientId
@@ -80,6 +88,11 @@ export default function AppointmentDetailScreen() {
   )
 
   const charges = useAsync(() => afroditeApi.getAppointmentTransactions(id), [id])
+  const procedures = useAsync(
+    () => (patientId ? afroditeApi.getPatientProcedures(patientId).then((list) => list.filter((p) => p.appointmentId === id)) : null),
+    [patientId, id]
+  )
+  const packages = useAsync(() => (patientId ? afroditeApi.getPatientPackages(patientId) : null), [patientId])
   const appointment = appt.data
   const next = appointment && NEXT_STEP[appointment.status]
   const chargeDefaults = appointment && {
@@ -97,7 +110,11 @@ export default function AppointmentDetailScreen() {
       appt.setData(updated)
       toast(next.toast)
       // Ao finalizar sem cobrança registrada, já abre o lançamento
-      if (next.status === 'Concluído' && charges.data && charges.data.length === 0) setCharging(true)
+      // Ao finalizar: primeiro o registro clínico, depois a cobrança
+      if (next.status === 'Concluído') {
+        if (procedures.data && procedures.data.length === 0) setRecording(true)
+        else if (charges.data && charges.data.length === 0) setCharging(true)
+      }
     } catch (err) {
       toast(friendlyMessage(err, 'Não foi possível atualizar o atendimento'), { severity: 'error' })
     } finally {
@@ -106,7 +123,7 @@ export default function AppointmentDetailScreen() {
   }
 
   return (
-    <AppScreen header={<PatientHeader patient={patient.data} error={appt.error || patient.error} title="Agendamento" />}>
+    <AppScreen header={<PatientHeader patient={patient.data} error={appt.error || patient.error} hideAlerts title="Agendamento" />}>
       {appt.error && <ErrorState error={appt.error} onRetry={appt.reload} />}
 
       {appt.loading && (
@@ -119,6 +136,7 @@ export default function AppointmentDetailScreen() {
 
       {appointment && (
         <>
+          {patient.data?.clinicalAlerts?.length > 0 && <ClinicalAlerts alerts={patient.data.clinicalAlerts} sx={{ mb: 1.25 }} />}
           <Card sx={{ p: 2.25 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
               <Typography variant="h5" component="h2">
@@ -159,6 +177,46 @@ export default function AppointmentDetailScreen() {
               onClick={() => navigate(`/pacientes/${appointment.patientId}`)}
             />
           </Stack>
+
+          <SectionTitle>Prontuário do atendimento</SectionTitle>
+          {procedures.data && procedures.data.length > 0 ? (
+            <Stack spacing={1.25}>
+              {procedures.data.map((p) => (
+                <Card key={p.id}>
+                  <ButtonBase
+                    onClick={() => navigate(`/pacientes/${appointment.patientId}`)}
+                    sx={{ width: '100%', p: 2, gap: 1.5, justifyContent: 'flex-start', textAlign: 'left' }}
+                  >
+                    <Box sx={{ width: 40, height: 40, borderRadius: '13px', display: 'grid', placeItems: 'center', bgcolor: brand.blush, color: brand.wine }}>
+                      <SpaRoundedIcon sx={{ fontSize: 20 }} />
+                    </Box>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="subtitle2">{p.name}</Typography>
+                      <Typography variant="caption" color="text.secondary" component="div" noWrap>
+                        {[p.area, p.product, p.lot && `lote ${p.lot}`].filter(Boolean).join(' • ') || 'Registrado no prontuário'}
+                      </Typography>
+                    </Box>
+                    <ChevronRightRoundedIcon sx={{ color: brand.roseLight }} />
+                  </ButtonBase>
+                </Card>
+              ))}
+            </Stack>
+          ) : (
+            <Button fullWidth size="large" variant="outlined" startIcon={<SpaRoundedIcon />} onClick={() => setRecording(true)} disabled={!procedures.data}>
+              Registrar procedimento
+            </Button>
+          )}
+
+          {packages.data?.some((p) => p.remaining > 0) && (
+            <Box sx={{ mt: 1.25 }}>
+              <PackagesCard
+                patientId={appointment.patientId}
+                packages={packages.data.filter((p) => p.remaining > 0 || (p.usage || []).some((u) => u.appointmentId === id))}
+                onChange={(list) => packages.setData((prev) => prev.map((p) => list.find((x) => x.id === p.id) || p))}
+                appointmentId={id}
+              />
+            </Box>
+          )}
 
           <SectionTitle>Cobrança</SectionTitle>
           {charges.data && charges.data.length > 0 ? (
@@ -231,17 +289,36 @@ export default function AppointmentDetailScreen() {
                 {saving ? <CircularProgress size={22} sx={{ color: '#fff' }} /> : next.label}
               </Button>
             )}
-            <Button
-              fullWidth
-              size="large"
-              variant="outlined"
-              onClick={() => navigate(`/pacientes/${appointment.patientId}`)}
-            >
-              Ver paciente
-            </Button>
+            <Stack direction="row" spacing={1.25}>
+              <Button fullWidth size="large" variant="outlined" onClick={() => navigate(`/pacientes/${appointment.patientId}`)}>
+                Ver paciente
+              </Button>
+              <Button fullWidth size="large" variant="outlined" startIcon={<RequestQuoteRoundedIcon />} onClick={() => setQuoting(true)}>
+                Orçamento
+              </Button>
+            </Stack>
           </Stack>
         </>
       )}
+      <ProcedureFormSheet
+        open={recording}
+        onClose={() => setRecording(false)}
+        patientId={appointment?.patientId}
+        defaults={appointment && { name: appointment.procedure, appointmentId: id }}
+        alerts={patient.data?.clinicalAlerts}
+        onSaved={(proc) => {
+          procedures.setData((prev) => [...(prev || []), proc])
+          toast('Procedimento registrado no prontuário')
+          if (appointment.status === 'Concluído' && charges.data?.length === 0) setCharging(true)
+        }}
+      />
+      <QuoteEditorSheet
+        open={quoting}
+        onClose={() => setQuoting(false)}
+        client={appointment && { kind: 'patient', id: appointment.patientId, name: appointment.patientName, phone: patient.data?.phone || '' }}
+        appointmentId={id}
+        onSaved={(q) => navigate(`/vendas/orcamentos/${q.id}`)}
+      />
       <TransactionFormSheet
         open={charging}
         onClose={() => setCharging(false)}

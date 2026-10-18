@@ -14,6 +14,7 @@ import PaidRoundedIcon from '@mui/icons-material/PaidRounded'
 import SellRoundedIcon from '@mui/icons-material/SellRounded'
 import CampaignRoundedIcon from '@mui/icons-material/CampaignRounded'
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded'
+import MenuBookRoundedIcon from '@mui/icons-material/MenuBookRounded'
 import NotificationsNoneRoundedIcon from '@mui/icons-material/NotificationsNoneRounded'
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
@@ -53,7 +54,8 @@ export default function MaisScreen() {
   const items = [
     { icon: <NotificationsNoneRoundedIcon />, label: 'Notificações', onClick: () => navigate('/notificacoes') },
     { icon: <PaidRoundedIcon />, label: 'Financeiro', onClick: () => navigate('/financeiro') },
-    { icon: <SellRoundedIcon />, label: 'Vendas' },
+    { icon: <SellRoundedIcon />, label: 'Vendas', onClick: () => navigate('/vendas') },
+    { icon: <MenuBookRoundedIcon />, label: 'Catálogo e preços', onClick: () => navigate('/vendas?aba=catalogo') },
     { icon: <CampaignRoundedIcon />, label: 'Marketing' },
     { icon: <SettingsRoundedIcon />, label: 'Configurações' }
   ]

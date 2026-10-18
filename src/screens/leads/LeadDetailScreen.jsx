@@ -33,6 +33,9 @@ import { EmptyState, ErrorState, ListSkeleton } from '../../components/StateView
 import EditLeadSheet from './EditLeadSheet.jsx'
 import MoveStageSheet from './MoveStageSheet.jsx'
 import ConvertLeadSheet from './ConvertLeadSheet.jsx'
+import QuoteEditorSheet from '../sales/QuoteEditorSheet.jsx'
+import ListCard from '../../components/ListCard.jsx'
+import RequestQuoteRoundedIcon from '@mui/icons-material/RequestQuoteRounded'
 
 const TABS = ['Resumo', 'Histórico', 'Proposta']
 
@@ -59,9 +62,10 @@ export default function LeadDetailScreen() {
   const navigate = useNavigate()
   const toast = useToast()
   const [tab, setTab] = useState(0)
-  const [sheet, setSheet] = useState(null) // 'edit' | 'move' | 'convert' | 'contact'
+  const [sheet, setSheet] = useState(null) // 'edit' | 'move' | 'convert' | 'contact' | 'quote'
   const { data: lead, error, loading, reload, setData } = useAsync(() => afroditeApi.getLead(id), [id])
   const activities = useAsync(() => afroditeApi.getActivities('leads', id), [id])
+  const quotes = useAsync(() => afroditeApi.getQuotes({ leadId: id }), [id])
 
   const refreshAll = () => {
     reload()
@@ -277,7 +281,9 @@ export default function LeadDetailScreen() {
         </>
       )}
 
-      {lead && tab === 2 && <PropostaTab lead={lead} onEdit={() => setSheet('edit')} />}
+      {lead && tab === 2 && (
+        <PropostaTab lead={lead} quotes={quotes.data} onEdit={() => setSheet('edit')} onNewQuote={() => setSheet('quote')} />
+      )}
 
       <EditLeadSheet
         open={sheet === 'edit'}
@@ -309,6 +315,12 @@ export default function LeadDetailScreen() {
           navigate(`/pacientes/${patientId}`)
         }}
       />
+      <QuoteEditorSheet
+        open={sheet === 'quote'}
+        onClose={() => setSheet(null)}
+        client={lead && { kind: 'lead', id: lead.id, name: lead.name, phone: lead.phone }}
+        onSaved={(q) => navigate(`/vendas/orcamentos/${q.id}`)}
+      />
       <LogContactSheet
         open={sheet === 'contact'}
         onClose={() => setSheet(null)}
@@ -324,7 +336,8 @@ export default function LeadDetailScreen() {
   )
 }
 
-function PropostaTab({ lead, onEdit }) {
+function PropostaTab({ lead, quotes, onEdit, onNewQuote }) {
+  const navigate = useNavigate()
   const paidPct = lead.proposalValue ? Math.min(100, Math.round((lead.downPayment / lead.proposalValue) * 100)) : 0
   return (
     <Stack spacing={1.25}>
@@ -365,6 +378,30 @@ function PropostaTab({ lead, onEdit }) {
       <Button size="large" variant="outlined" startIcon={<EditRoundedIcon />} onClick={onEdit}>
         Editar valores
       </Button>
+
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 1.5 }}>
+        <Typography variant="subtitle1">Orçamentos</Typography>
+        {afroditeApi.isOpenLead(lead) && (
+          <Button size="small" startIcon={<RequestQuoteRoundedIcon />} onClick={onNewQuote} sx={{ color: brand.wine }}>
+            Criar orçamento
+          </Button>
+        )}
+      </Box>
+      {quotes?.length === 0 && (
+        <Typography variant="body2" color="text.secondary">
+          Nenhum orçamento ainda. Monte um a partir do catálogo e envie pelo WhatsApp.
+        </Typography>
+      )}
+      {quotes?.map((q, idx) => (
+        <ListCard
+          key={q.id}
+          index={idx}
+          onClick={() => navigate(`/vendas/orcamentos/${q.id}`)}
+          title={`${q.code} • ${formatCurrency(q.total, { cents: false })}`}
+          subtitle={q.items.map((i) => i.name).join(', ')}
+          trailing={<StatusChip status={q.displayStatus} />}
+        />
+      ))}
     </Stack>
   )
 }

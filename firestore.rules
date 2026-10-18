@@ -36,6 +36,11 @@ service cloud.firestore {
       allow read, write: if signedIn() && request.auth.uid == uid;
     }
 
+    // Consulta de grupo (todos os procedimentos) usada em Oportunidades
+    match /{path=**}/procedures/{procedureId} {
+      allow read: if signedIn();
+    }
+
     match /{collection}/{document=**} {
       allow read, write: if signedIn() && collection != 'users';
     }
