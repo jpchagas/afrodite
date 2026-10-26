@@ -28,6 +28,9 @@ import { HeaderIconButton } from '../../components/ScreenHeader.jsx'
 import ClinicalRecordTab from './partials/ClinicalRecordTab.jsx'
 import PackagesCard from './partials/PackagesCard.jsx'
 import QuoteEditorSheet from '../sales/QuoteEditorSheet.jsx'
+import CareTaskCard from '../care/CareTaskCard.jsx'
+import NewCareTaskSheet from '../care/NewCareTaskSheet.jsx'
+import SectionTitle from '../../components/SectionTitle.jsx'
 import RequestQuoteRoundedIcon from '@mui/icons-material/RequestQuoteRounded'
 import PhotosGallery from './partials/PhotosGallery.jsx'
 import NewAppointmentSheet from '../agenda/NewAppointmentSheet.jsx'
@@ -49,6 +52,7 @@ export default function PatientProfileScreen() {
   const finance = useAsync(() => afroditeApi.getPatientTransactions(id), [id])
   const anamnese = useAsync(() => afroditeApi.getPatientAnamnese(id), [id])
   const packages = useAsync(() => afroditeApi.getPatientPackages(id), [id])
+  const care = useAsync(() => afroditeApi.getPatientCareTasks(id), [id])
 
   const phoneDigits = patient.data?.phone?.replace(/\D/g, '')
 
@@ -98,6 +102,12 @@ export default function PatientProfileScreen() {
               packages={packages.data}
               onPackagesChange={packages.setData}
               onOrcamento={() => setSheet('quote')}
+              care={care.data}
+              onCareChanged={() => {
+                care.reload()
+                timeline.reload()
+              }}
+              onNewCareTask={() => setSheet('care')}
               onVerFinanceiro={() => navigate(`/financeiro?paciente=${id}`)}
               onVerAnamnese={() => navigate(`/pacientes/${id}/anamnese`)}
               onVerFotos={() => setTab(3)}
@@ -114,6 +124,7 @@ export default function PatientProfileScreen() {
               onChanged={() => {
                 patient.reload()
                 timeline.reload()
+                care.reload() // procedimento novo gera o plano de cuidados
               }}
             />
           )}
@@ -139,6 +150,15 @@ export default function PatientProfileScreen() {
           patient.setData(updated)
           timeline.reload()
           toast('Dados atualizados')
+        }}
+      />
+      <NewCareTaskSheet
+        open={sheet === 'care'}
+        onClose={() => setSheet(null)}
+        patient={patient.data}
+        onSaved={() => {
+          care.reload()
+          toast('Tarefa criada')
         }}
       />
       <QuoteEditorSheet
@@ -192,7 +212,7 @@ function QuickAction({ icon, label, onClick }) {
   )
 }
 
-function ResumoTab({ patient, anamnese, finance, packages, onPackagesChange, onOrcamento, onVerFinanceiro, onVerLead, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
+function ResumoTab({ patient, anamnese, finance, packages, onPackagesChange, onOrcamento, care, onCareChanged, onNewCareTask, onVerFinanceiro, onVerLead, onVerAnamnese, onVerFotos, onVerPrescricoes, onVerDocumentos, onAgendar }) {
 
   if (!patient) {
     return (
@@ -247,6 +267,32 @@ function ResumoTab({ patient, anamnese, finance, packages, onPackagesChange, onO
       )}
 
       <PackagesCard patientId={patient.id} packages={packages} onChange={onPackagesChange} />
+
+      {care && (
+        <Box>
+          <SectionTitle
+            sx={{ mt: 1.5 }}
+            action={
+              <Button size="small" onClick={onNewCareTask} sx={{ color: brand.wine }}>
+                Nova tarefa
+              </Button>
+            }
+          >
+            Acompanhamento
+          </SectionTitle>
+          {care.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              Nenhum acompanhamento pendente.
+            </Typography>
+          ) : (
+            <Stack spacing={1.25}>
+              {care.slice(0, 3).map((t, idx) => (
+                <CareTaskCard key={t.id} task={t} index={idx} showPatient={false} onChanged={onCareChanged} />
+              ))}
+            </Stack>
+          )}
+        </Box>
+      )}
 
       <Button fullWidth size="large" variant="outlined" startIcon={<EventAvailableRoundedIcon />} onClick={onAgendar}>
         Agendar atendimento

@@ -33,6 +33,7 @@ import {
   where,
   orderBy,
   limit,
+  runTransaction,
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore'
@@ -201,9 +202,19 @@ export async function getDashboardSummary() {
 
 // ---- Pacientes ----
 
+function ageFrom(birthDate) {
+  if (!birthDate) return null
+  const [y, m, d] = birthDate.split('-').map(Number)
+  const now = new Date()
+  let age = now.getFullYear() - y
+  if (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d)) age--
+  return age
+}
+
 function toPatient(p) {
   return {
     ...p,
+    age: p.birthDate ? ageFrom(p.birthDate) : p.age ?? null,
     lastVisitDate: p.lastVisit || null,
     nextReturnDate: p.nextReturn || null,
     lastVisit: formatDateKey(p.lastVisit),
@@ -222,13 +233,14 @@ export async function getPatient(id) {
 
 export const PATIENT_STATUSES = ['Em avaliação', 'Ativa', 'Em acompanhamento', 'Pós procedimento', 'Inativa']
 
-function newPatientData({ name, phone, cpf, age, email }, extra = {}) {
+function newPatientData({ name, phone, cpf, age, email, birthDate }, extra = {}) {
   return {
     name: name.trim(),
     phone: (phone || '').trim(),
     cpf: (cpf || '').trim(),
     email: (email || '').trim(),
     age: age ? Number(age) : null,
+    birthDate: birthDate || null,
     status: 'Em avaliação',
     lastVisit: null,
     lastVisitLabel: 'Sem consultas',
@@ -250,7 +262,7 @@ export async function createPatient(fields) {
   return toPatient({ id: ref.id, ...data })
 }
 
-const PATIENT_EDITABLE = ['name', 'phone', 'cpf', 'email', 'age', 'status']
+const PATIENT_EDITABLE = ['name', 'phone', 'cpf', 'email', 'age', 'birthDate', 'status']
 
 export async function updatePatient(id, fields) {
   const changes = pick(fields, PATIENT_EDITABLE)
@@ -461,6 +473,16 @@ export async function createProcedure(patientId, fields) {
   const batch = writeBatch(db)
   batch.set(ref, data)
   if (Object.keys(patientChanges).length) batch.update(doc(db, 'patients', patientId), patientChanges)
+  if (data.status === 'Concluído') {
+    const automations = await getAutomations()
+    if (automations.postProcedure.enabled) {
+      const catalog = await getCatalog({ activeOnly: true }).catch(() => [])
+      const item = catalog.find((c) => normalizeName(c.name) === normalizeName(data.name))
+      for (const task of carePlanFor({ patientId, patient, procedure: { id: ref.id, ...data }, returnInDays: days, maintenanceDays: item?.maintenanceDays })) {
+        batch.set(doc(collection(db, 'careTasks')), task)
+      }
+    }
+  }
   await batch.commit()
   return toProcedure({ id: ref.id, ...data })
 }
@@ -1564,6 +1586,434 @@ export function maintenanceWhatsAppUrl(o) {
   const first = o.patientName.split(' ')[0]
   const text = `Olá, ${first}! Tudo bem? Já está chegando a hora da manutenção do seu ${o.procedure.toLowerCase()}. Quer que eu reserve um horário para você?`
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`
+}
+
+// ---- Acompanhamento (Care) ----
+// `careTasks`: o que a equipe precisa fazer por cada paciente em uma data —
+// check-in pós-procedimento, confirmar retorno, manutenção, aniversário,
+// reativação ou tarefa avulsa. Status: Pendente → Concluído | Ignorado.
+
+export const CARE_TYPES = {
+  checkin: { label: 'Check-in pós-procedimento', short: 'Check-in' },
+  retorno: { label: 'Confirmar retorno', short: 'Retorno' },
+  manutencao: { label: 'Manutenção', short: 'Manutenção' },
+  queixa: { label: 'Reavaliar queixa', short: 'Queixa' },
+  aniversario: { label: 'Aniversário', short: 'Aniversário' },
+  reativacao: { label: 'Reativação', short: 'Reativação' },
+  personalizado: { label: 'Tarefa', short: 'Tarefa' }
+}
+
+// Tipos em que a equipe registra como a paciente está
+export const CARE_OUTCOME_TYPES = ['checkin', 'retorno', 'queixa']
+
+// Tarefas geradas ao registrar um procedimento concluído
+function carePlanFor({ patientId, patient, procedure, returnInDays, maintenanceDays }) {
+  const base = {
+    patientId,
+    patientName: patient.name,
+    phone: patient.phone || '',
+    procedureId: procedure.id,
+    procedureName: procedure.name,
+    postCare: procedure.postCare || '',
+    status: 'Pendente',
+    source: 'procedimento',
+    notes: '',
+    createdBy: currentUid(),
+    createdAt: serverTimestamp()
+  }
+  const at = (days) => toDateKey(addDays(parseDateKey(procedure.date), days))
+  const tasks = [{ ...base, type: 'checkin', title: `Check-in pós ${procedure.name}`, dueDate: at(1) }]
+  if (returnInDays > 0) tasks.push({ ...base, type: 'retorno', title: `Confirmar retorno • ${procedure.name}`, dueDate: at(Math.max(1, returnInDays - 2)) })
+  if (maintenanceDays > 0) tasks.push({ ...base, type: 'manutencao', title: `Manutenção de ${procedure.name}`, dueDate: at(Math.max(1, maintenanceDays - 7)) })
+  // Tarefas cujo dia já passou (registro retroativo) não são criadas
+  return tasks.filter((t) => t.dueDate >= todayKey())
+}
+
+function toCareTask(t) {
+  const today = todayKey()
+  const overdue = t.status === 'Pendente' && t.dueDate < today
+  let dueLabel = formatDateKey(t.dueDate).slice(0, 5)
+  if (t.dueDate === today) dueLabel = 'Hoje'
+  else if (t.dueDate === toDateKey(addDays(new Date(), 1))) dueLabel = 'Amanhã'
+  else if (overdue) {
+    const days = Math.round((parseDateKey(today) - parseDateKey(t.dueDate)) / 86_400_000)
+    dueLabel = days === 1 ? 'Atrasada 1 dia' : `Atrasada ${days} dias`
+  }
+  return { ...t, overdue, dueLabel, typeLabel: CARE_TYPES[t.type]?.label || 'Tarefa', completedAt: toDate(t.completedAt) }
+}
+
+const byDue = (a, b) => a.dueDate.localeCompare(b.dueDate) || a.patientName.localeCompare(b.patientName)
+
+// scope: 'hoje' (atrasadas + hoje) | 'proximos' (próximos 14 dias) | 'concluidos'
+export async function getCareTasks(scope = 'hoje') {
+  if (scope === 'concluidos') {
+    const done = await list(query(collection(db, 'careTasks'), where('status', 'in', ['Concluído', 'Ignorado'])))
+    return done.map(toCareTask).sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)).slice(0, 60)
+  }
+  const pending = (await list(query(collection(db, 'careTasks'), where('status', '==', 'Pendente')))).map(toCareTask)
+  const today = todayKey()
+  const horizon = toDateKey(addDays(new Date(), 14))
+  return pending.filter((t) => (scope === 'hoje' ? t.dueDate <= today : t.dueDate > today && t.dueDate <= horizon)).sort(byDue)
+}
+
+export async function getCareCounts() {
+  const pending = (await list(query(collection(db, 'careTasks'), where('status', '==', 'Pendente')))).map(toCareTask)
+  const today = todayKey()
+  return {
+    today: pending.filter((t) => t.dueDate <= today).length,
+    overdue: pending.filter((t) => t.overdue).length,
+    upcoming: pending.filter((t) => t.dueDate > today).length,
+    preview: pending.filter((t) => t.dueDate <= today).sort(byDue).slice(0, 3)
+  }
+}
+
+export async function getPatientCareTasks(patientId) {
+  const items = await list(query(collection(db, 'careTasks'), where('patientId', '==', patientId)))
+  return items.map(toCareTask).filter((t) => t.status === 'Pendente').sort(byDue)
+}
+
+export async function createCareTask({ patientId, patientName, phone, title, dueDate, type = 'personalizado', notes = '' }) {
+  const data = {
+    type,
+    title: title.trim(),
+    patientId,
+    patientName,
+    phone: phone || '',
+    dueDate: dueDate || todayKey(),
+    status: 'Pendente',
+    source: 'manual',
+    notes: notes.trim(),
+    createdBy: currentUid(),
+    createdAt: serverTimestamp()
+  }
+  const ref = await addDoc(collection(db, 'careTasks'), data)
+  return toCareTask({ id: ref.id, ...data })
+}
+
+/**
+ * Conclui a tarefa e registra no histórico da paciente. `outcome`:
+ * 'ok' (sem queixas) | 'queixa' — queixa vira evolução no prontuário e
+ * gera "Reavaliar queixa" para o dia seguinte. `channel`: 'whatsapp' | 'ligacao' | null.
+ */
+export async function completeCareTask(id, { outcome = null, note = '', channel = null } = {}) {
+  const task = toCareTask(await getOrThrow(doc(db, 'careTasks', id), 'Tarefa não encontrada'))
+  const user = auth.currentUser
+  const text = [
+    `${task.typeLabel}${task.procedureName && !task.title.includes(task.procedureName) ? ` • ${task.procedureName}` : ''}`,
+    outcome === 'ok' ? 'sem queixas' : outcome === 'queixa' ? 'COM QUEIXA' : null,
+    note.trim() || null
+  ]
+    .filter(Boolean)
+    .join(' — ')
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'careTasks', id), {
+    status: 'Concluído',
+    outcome,
+    resultNote: note.trim(),
+    channel,
+    completedAt: serverTimestamp(),
+    completedBy: user?.uid || null,
+    completedByName: user?.displayName || user?.email || null
+  })
+  batch.set(activityRef('patients', task.patientId), activityData(channel || 'nota', `Acompanhamento: ${text}`, { label: 'Acompanhamento', careTaskId: id }))
+  if (outcome === 'queixa') {
+    batch.set(doc(collection(db, 'patients', task.patientId, 'evolutions')), {
+      text: `Intercorrência relatada no acompanhamento (${task.title}): ${note.trim() || 'sem detalhes'}`,
+      date: todayKey(),
+      appointmentId: null,
+      createdBy: user?.uid || null,
+      createdByName: user?.displayName || user?.email || null,
+      createdAt: serverTimestamp()
+    })
+    batch.set(doc(collection(db, 'careTasks')), {
+      type: 'queixa',
+      title: `Reavaliar queixa • ${task.procedureName || task.patientName}`,
+      patientId: task.patientId,
+      patientName: task.patientName,
+      phone: task.phone,
+      procedureId: task.procedureId || null,
+      procedureName: task.procedureName || null,
+      dueDate: toDateKey(addDays(new Date(), 1)),
+      status: 'Pendente',
+      source: 'acompanhamento',
+      notes: note.trim(),
+      createdBy: user?.uid || null,
+      createdAt: serverTimestamp()
+    })
+  }
+  await batch.commit()
+}
+
+export async function rescheduleCareTask(id, dueDate) {
+  await updateDoc(doc(db, 'careTasks', id), { dueDate })
+}
+
+export async function dismissCareTask(id) {
+  await updateDoc(doc(db, 'careTasks', id), { status: 'Ignorado', completedAt: serverTimestamp() })
+}
+
+function waUrl(phone, text) {
+  let digits = (phone || '').replace(/\D/g, '')
+  if (digits && !digits.startsWith('55')) digits = `55${digits}`
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`
+}
+
+// Mensagem pronta por tipo de tarefa
+export function careMessage(task) {
+  const first = (task.patientName || '').split(' ')[0]
+  const proc = (task.procedureName || 'procedimento').toLowerCase()
+  switch (task.type) {
+    case 'checkin':
+      return `Olá, ${first}! Passando para saber como você está depois do ${proc}. Está tudo bem? Qualquer desconforto, me avise por aqui.${task.postCare ? `\n\nLembrete dos cuidados: ${task.postCare}` : ''}`
+    case 'retorno':
+      return `Olá, ${first}! Seu retorno do ${proc} está chegando. Posso confirmar o seu horário?`
+    case 'manutencao':
+      return `Olá, ${first}! Já está chegando a hora da manutenção do seu ${proc}. Quer que eu reserve um horário para você?`
+    case 'queixa':
+      return `Olá, ${first}! Como você está hoje? Melhorou aquele desconforto?`
+    case 'aniversario':
+      return `Feliz aniversário, ${first}! 🎉 Toda a equipe deseja um dia lindo para você. Temos um presente especial esperando por você aqui na clínica!`
+    case 'reativacao':
+      return `Olá, ${first}! Sentimos sua falta por aqui. Que tal agendar uma avaliação para cuidarmos de você de novo?`
+    default:
+      return `Olá, ${first}!`
+  }
+}
+
+export function careWhatsAppUrl(task) {
+  return waUrl(task.phone, careMessage(task))
+}
+
+// ---- Marketing: públicos, campanhas e automações ----
+
+export const SEGMENTS = [
+  { type: 'inativas', label: 'Pacientes inativas', param: { key: 'days', label: 'Sem visita há', options: [60, 90, 120, 180], suffix: 'dias', default: 90 } },
+  { type: 'aniversariantes', label: 'Aniversariantes do mês' },
+  { type: 'procedimento', label: 'Fizeram um procedimento', param: { key: 'procedure', label: 'Procedimento', catalog: true } },
+  { type: 'leads_perdidos', label: 'Leads perdidos' },
+  { type: 'leads_sem_contato', label: 'Leads abertos sem contato', param: { key: 'days', label: 'Sem contato há', options: [3, 7, 15, 30], suffix: 'dias', default: 7 } },
+  { type: 'origem', label: 'Por origem', param: { key: 'source', label: 'Origem', options: LEAD_SOURCES } },
+  { type: 'pacientes', label: 'Todas as pacientes ativas' }
+]
+
+export function segmentLabel(segment) {
+  const def = SEGMENTS.find((s) => s.type === segment?.type)
+  if (!def) return 'Público'
+  const v = segment.params?.[def.param?.key]
+  return v ? `${def.label} • ${def.param.suffix ? `${v} ${def.param.suffix}` : v}` : def.label
+}
+
+const hasPhone = (x) => (x.phone || '').replace(/\D/g, '').length >= 10
+
+/**
+ * Pessoas de um público (com telefone): [{ kind, id, name, phone, vars }].
+ * `vars` alimenta as variáveis da mensagem.
+ */
+export async function getSegmentAudience(segment) {
+  const today = todayKey()
+  const params = segment.params || {}
+  const patientRows = (ps, extra = () => ({})) =>
+    ps.filter(hasPhone).map((p) => ({
+      kind: 'patient',
+      id: p.id,
+      name: p.name,
+      phone: p.phone,
+      vars: { ultima_visita: p.lastVisit ? formatDateKey(p.lastVisit) : '', ...extra(p) }
+    }))
+  const leadRows = (ls) =>
+    ls.filter(hasPhone).map((l) => ({ kind: 'lead', id: l.id, name: l.name, phone: l.phone, vars: { procedimento: l.interest || '' } }))
+
+  switch (segment.type) {
+    case 'inativas': {
+      const days = Number(params.days) || 90
+      const cutoff = toDateKey(addDays(new Date(), -days))
+      const [patients, future] = await Promise.all([
+        list(collection(db, 'patients')),
+        list(query(collection(db, 'appointments'), where('dateKey', '>=', today)))
+      ])
+      const booked = new Set(future.map((a) => a.patientId))
+      return patientRows(patients.filter((p) => p.lastVisit && p.lastVisit <= cutoff && !booked.has(p.id)))
+    }
+    case 'aniversariantes': {
+      const month = today.slice(5, 7)
+      const patients = await list(collection(db, 'patients'))
+      return patientRows(patients.filter((p) => p.birthDate?.slice(5, 7) === month)).sort((a, b) => a.name.localeCompare(b.name))
+    }
+    case 'procedimento': {
+      const target = normalizeName(params.procedure || '')
+      if (!target) return []
+      const [patients, procs] = await Promise.all([list(collection(db, 'patients')), getDocs(collectionGroup(db, 'procedures'))])
+      const ids = new Set(
+        procs.docs.filter((d) => normalizeName(d.data().name).includes(target) && d.data().status === 'Concluído').map((d) => d.ref.parent.parent.id)
+      )
+      return patientRows(patients.filter((p) => ids.has(p.id)), () => ({ procedimento: params.procedure }))
+    }
+    case 'leads_perdidos': {
+      const leads = await list(query(collection(db, 'leads'), where('status', '==', 'Perdido')))
+      return leadRows(leads)
+    }
+    case 'leads_sem_contato': {
+      const days = Number(params.days) || 7
+      const cutoff = addDays(new Date(), -days)
+      const leads = await list(collection(db, 'leads'))
+      return leadRows(leads.filter((l) => isOpenLead(l) && (toDate(l.lastContactAt) || toDate(l.createdAt) || new Date(0)) < cutoff))
+    }
+    case 'origem': {
+      const [patients, leads] = await Promise.all([
+        list(query(collection(db, 'patients'), where('source', '==', params.source || ''))),
+        list(query(collection(db, 'leads'), where('source', '==', params.source || '')))
+      ])
+      return [...patientRows(patients), ...leadRows(leads.filter((l) => !l.patientId))]
+    }
+    case 'pacientes': {
+      const patients = await list(collection(db, 'patients'))
+      return patientRows(patients.filter((p) => p.status !== 'Inativa'))
+    }
+    default:
+      return []
+  }
+}
+
+export const MESSAGE_VARIABLES = [
+  { key: 'primeiro_nome', label: 'Primeiro nome' },
+  { key: 'nome', label: 'Nome completo' },
+  { key: 'procedimento', label: 'Procedimento' },
+  { key: 'ultima_visita', label: 'Última visita' }
+]
+
+export const MESSAGE_TEMPLATES = [
+  { label: 'Reativação', text: 'Olá, {primeiro_nome}! Sentimos sua falta por aqui 💕 Que tal agendar uma avaliação? Esta semana temos horários especiais para você.' },
+  { label: 'Manutenção', text: 'Olá, {primeiro_nome}! Já está na hora da manutenção do seu {procedimento}. Posso reservar um horário para você?' },
+  { label: 'Promoção', text: 'Olá, {primeiro_nome}! Neste mês preparamos condições especiais em procedimentos selecionados. Quer saber mais?' },
+  { label: 'Aniversário', text: 'Feliz aniversário, {primeiro_nome}! 🎉 Para comemorar, você tem um presente especial na sua próxima visita.' },
+  { label: 'Retomar lead', text: 'Oi, {primeiro_nome}! Tudo bem? Ainda tem interesse em {procedimento}? Posso te ajudar com as informações que faltam.' }
+]
+
+export function personalize(message, recipient) {
+  const vars = { nome: recipient.name, primeiro_nome: (recipient.name || '').split(' ')[0], ...(recipient.vars || {}) }
+  return message.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null && vars[k] !== '' ? vars[k] : k === 'procedimento' ? 'procedimento' : ''))
+}
+
+export function campaignWhatsAppUrl(campaign, recipient) {
+  return waUrl(recipient.phone, personalize(campaign.message, recipient))
+}
+
+function toCampaign(c) {
+  const recipients = c.recipients || []
+  const sent = recipients.filter((r) => r.status === 'enviado').length
+  const skipped = recipients.filter((r) => r.status === 'pulado').length
+  return {
+    ...c,
+    createdAt: toDate(c.createdAt),
+    startedAt: toDate(c.startedAt),
+    stats: { total: recipients.length, sent, skipped, pending: recipients.length - sent - skipped },
+    segmentLabel: segmentLabel(c.segment)
+  }
+}
+
+export async function getCampaigns() {
+  const items = await list(query(collection(db, 'campaigns'), orderBy('createdAt', 'desc')))
+  return items.map(toCampaign)
+}
+
+export async function getCampaign(id) {
+  return toCampaign(await getOrThrow(doc(db, 'campaigns', id), 'Campanha não encontrada'))
+}
+
+export async function createCampaign({ name, segment, message }) {
+  if (!message?.trim()) throw new Error('Escreva a mensagem.')
+  const audience = await getSegmentAudience(segment)
+  if (!audience.length) throw new Error('Esse público não tem ninguém com telefone cadastrado.')
+  const data = {
+    name: name.trim() || segmentLabel(segment),
+    segment,
+    message: message.trim(),
+    channel: 'whatsapp',
+    status: 'Em andamento',
+    recipients: audience.map((r) => ({ ...r, status: 'pendente', sentAt: null })),
+    createdBy: currentUid(),
+    createdAt: serverTimestamp(),
+    startedAt: serverTimestamp()
+  }
+  const ref = await addDoc(collection(db, 'campaigns'), data)
+  return getCampaign(ref.id)
+}
+
+/**
+ * Marca um destinatário como enviado/pulado (transação: dois aparelhos
+ * disparando ao mesmo tempo não se sobrescrevem). Envio registra a
+ * campanha no histórico do lead/paciente.
+ */
+export async function markCampaignRecipient(campaignId, index, status) {
+  const ref = doc(db, 'campaigns', campaignId)
+  let recipient = null
+  let campaignName = ''
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists()) throw new Error('Campanha não encontrada')
+    const data = snap.data()
+    const recipients = [...data.recipients]
+    recipients[index] = { ...recipients[index], status, sentAt: status === 'enviado' ? Timestamp.now() : null }
+    recipient = recipients[index]
+    campaignName = data.name
+    const done = recipients.every((r) => r.status !== 'pendente')
+    tx.update(ref, { recipients, ...(done ? { status: 'Concluída', completedAt: serverTimestamp() } : {}) })
+  })
+  if (status === 'enviado' && recipient) {
+    const target = recipient.kind === 'lead' ? 'leads' : 'patients'
+    await setDoc(activityRef(target, recipient.id), activityData('whatsapp', `Campanha "${campaignName}" enviada`, { label: 'Campanha', campaignId })).catch(() => {})
+  }
+  return getCampaign(campaignId)
+}
+
+/**
+ * Resultados da campanha: pacientes que agendaram e leads que viraram
+ * paciente depois de receber a mensagem (até 30 dias).
+ */
+export async function getCampaignResults(campaign) {
+  const sent = campaign.recipients.filter((r) => r.status === 'enviado' && r.sentAt)
+  if (!sent.length) return { booked: 0, converted: 0, names: [] }
+  const since = sent.map((r) => toDate(r.sentAt)).sort((a, b) => a - b)[0]
+  const [appts, leads] = await Promise.all([
+    list(query(collection(db, 'appointments'), where('createdAt', '>=', Timestamp.fromDate(since)))),
+    list(query(collection(db, 'leads'), where('status', '==', 'Convertido')))
+  ])
+  const within = (date, sentAt) => date && date >= sentAt && date - sentAt <= 30 * 86_400_000
+  const names = []
+  let booked = 0
+  let converted = 0
+  for (const r of sent) {
+    const sentAt = toDate(r.sentAt)
+    if (r.kind === 'patient' && appts.some((a) => a.patientId === r.id && within(toDate(a.createdAt), sentAt))) {
+      booked++
+      names.push(r.name)
+    }
+    if (r.kind === 'lead' && leads.some((l) => l.id === r.id && within(toDate(l.convertedAt), sentAt))) {
+      converted++
+      names.push(r.name)
+    }
+  }
+  return { booked, converted, names }
+}
+
+export const AUTOMATION_DEFAULTS = {
+  postProcedure: { enabled: true },
+  birthday: { enabled: true },
+  reactivation: { enabled: true, days: 120 },
+  leadNoContact: { enabled: true, days: 3 }
+}
+
+export async function getAutomations() {
+  const snap = await getDoc(doc(db, 'settings', 'automations'))
+  const data = snap.exists() ? snap.data() : {}
+  return Object.fromEntries(Object.entries(AUTOMATION_DEFAULTS).map(([k, v]) => [k, { ...v, ...(data[k] || {}) }]))
+}
+
+export async function updateAutomation(key, changes) {
+  const current = await getAutomations()
+  const next = { ...current[key], ...changes }
+  await setDoc(doc(db, 'settings', 'automations'), { [key]: next, updatedAt: serverTimestamp() }, { merge: true })
+  return { ...current, [key]: next }
 }
 
 // ---- Arquivos (Firebase Storage) ----

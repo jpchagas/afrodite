@@ -21,6 +21,8 @@ import StatusChip from '../components/StatusChip.jsx'
 import PersonAvatar from '../components/PersonAvatar.jsx'
 import NotificationBell from '../components/NotificationBell.jsx'
 import { ErrorState, ListSkeleton, EmptyState } from '../components/StateViews.jsx'
+import VolunteerActivismRoundedIcon from '@mui/icons-material/VolunteerActivismRounded'
+import { TONES } from '../theme/status.js'
 
 function RevenueCard({ summary, onClick }) {
   if (!summary) return <Skeleton variant="rounded" height={132} />
@@ -68,6 +70,7 @@ export default function HomeScreen() {
   const summary = useAsync(() => afroditeApi.getDashboardSummary(), [])
   const today = afroditeApi.getAgendaDayTabs(1)[0].key
   const agenda = useAsync(() => afroditeApi.getAppointmentsForDay(today), [today])
+  const care = useAsync(() => afroditeApi.getCareCounts(), [])
 
   const s = summary.data
   const firstName = user?.name || 'Dra.'
@@ -131,6 +134,32 @@ export default function HomeScreen() {
             />
           </Box>
         </>
+      )}
+
+      {care.data?.today > 0 && (
+        <Card sx={{ mt: 1.25 }}>
+          <CardActionArea onClick={() => navigate('/cuidados')} sx={{ p: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Box sx={{ width: 40, height: 40, borderRadius: '13px', display: 'grid', placeItems: 'center', bgcolor: brand.blush, color: brand.wine }}>
+                <VolunteerActivismRoundedIcon sx={{ fontSize: 20 }} />
+              </Box>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="subtitle2">
+                  {care.data.today === 1 ? '1 acompanhamento para hoje' : `${care.data.today} acompanhamentos para hoje`}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" component="div" noWrap>
+                  {care.data.preview.map((t) => t.patientName.split(' ')[0]).join(', ')}
+                  {care.data.today > care.data.preview.length ? ` e mais ${care.data.today - care.data.preview.length}` : ''}
+                </Typography>
+              </Box>
+              {care.data.overdue > 0 && (
+                <Box component="span" sx={{ px: 1, py: 0.25, borderRadius: 999, fontSize: '0.72rem', fontWeight: 650, bgcolor: TONES.danger.bg, color: TONES.danger.fg, whiteSpace: 'nowrap' }}>
+                  {care.data.overdue} atrasado{care.data.overdue > 1 ? 's' : ''}
+                </Box>
+              )}
+            </Box>
+          </CardActionArea>
+        </Card>
       )}
 
       <SectionTitle

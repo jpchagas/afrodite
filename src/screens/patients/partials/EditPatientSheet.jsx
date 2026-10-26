@@ -18,6 +18,7 @@ export default function EditPatientSheet({ open, onClose, patient, onSaved }) {
         email: patient.email || '',
         cpf: patient.cpf || '',
         age: patient.age != null ? String(patient.age) : '',
+        birthDate: patient.birthDate || '',
         status: patient.status || 'Em avaliação'
       })
       setError(null)
@@ -60,8 +61,16 @@ export default function EditPatientSheet({ open, onClose, patient, onSaved }) {
         <TextField label="Nome completo" value={form.name} onChange={set('name')} required />
         <TextField label="Telefone / WhatsApp" value={form.phone} onChange={set('phone', maskPhone)} inputMode="tel" required />
         <TextField label="E-mail" type="email" value={form.email} onChange={set('email')} inputMode="email" />
+        <TextField label="CPF" value={form.cpf} onChange={set('cpf', maskCpf)} inputMode="numeric" />
         <Stack direction="row" spacing={1.5}>
-          <TextField label="CPF" value={form.cpf} onChange={set('cpf', maskCpf)} inputMode="numeric" sx={{ flex: 2 }} />
+          <TextField
+            label="Nascimento"
+            type="date"
+            value={form.birthDate}
+            onChange={(e) => setForm((p) => ({ ...p, birthDate: e.target.value }))}
+            InputLabelProps={{ shrink: true }}
+            sx={{ flex: 1.6 }}
+          />
           <TextField
             label="Idade"
             value={form.age}

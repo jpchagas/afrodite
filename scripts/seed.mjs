@@ -239,6 +239,44 @@ const EVOLUTIONS = {
   ]
 }
 
+// ---- Acompanhamento e marketing ----
+
+// Aniversários: Camila faz aniversário hoje; Letícia ainda neste mês
+const BIRTHDAYS = {
+  p1: '1994-03-12',
+  p2: `1998-${dateKey(0).slice(5)}`,
+  p3: '1986-07-02',
+  p6: `1999-${dateKey(0).slice(5, 7)}-${dateKey(0).slice(8) < '28' ? '28' : '01'}`,
+  p7: '1988-11-20'
+}
+for (const [pid, birthDate] of Object.entries(BIRTHDAYS)) PATIENTS.find((p) => p.id === pid).birthDate = birthDate
+
+const CARE_TASKS = [
+  { id: 'ct1', type: 'checkin', title: 'Check-in pós Preenchimento labial', patientId: 'p3', procedureName: 'Preenchimento labial', postCare: 'Compressa fria nas primeiras 24h; evitar beijar e maquiagem nos lábios por 24h.', dueDate: dateKey(-1) },
+  { id: 'ct2', type: 'retorno', title: 'Confirmar retorno • Toxina botulínica', patientId: 'p1', procedureName: 'Toxina botulínica', dueDate: dateKey(0) },
+  { id: 'ct3', type: 'manutencao', title: 'Manutenção de Toxina botulínica', patientId: 'p7', procedureName: 'Toxina botulínica', dueDate: dateKey(-2) },
+  { id: 'ct4', type: 'reativacao', title: 'Reativar Letícia', patientId: 'p6', dueDate: dateKey(0), source: 'automacao' },
+  { id: 'ct5', type: 'manutencao', title: 'Manutenção de Skinbooster', patientId: 'p8', procedureName: 'Skinbooster', dueDate: dateKey(3) },
+  { id: 'ct6', type: 'personalizado', title: 'Enviar fotos de 30 dias', patientId: 'p1', dueDate: dateKey(6), notes: 'Comparar com as fotos de antes.' },
+  { id: 'ct7', type: 'checkin', title: 'Check-in pós Skinbooster', patientId: 'p8', procedureName: 'Skinbooster', dueDate: dateKey(-34), status: 'Concluído', outcome: 'ok', resultNote: 'Sem vermelhidão, adorou o resultado.', channel: 'whatsapp', completedDaysAgo: 34 }
+]
+
+const CAMPAIGNS = [
+  {
+    id: 'cmp1',
+    name: 'Reativação de primavera',
+    segment: { type: 'inativas', params: { days: 90 } },
+    message: 'Olá, {primeiro_nome}! Sentimos sua falta por aqui 💕 Que tal agendar uma avaliação? Esta semana temos horários especiais para você.',
+    status: 'Concluída',
+    sentDaysAgo: 10,
+    recipients: [
+      { kind: 'patient', id: 'p2', status: 'enviado' },
+      { kind: 'patient', id: 'p7', status: 'enviado' },
+      { kind: 'patient', id: 'p6', status: 'pulado' }
+    ]
+  }
+]
+
 // ---- Vendas ----
 const CATALOG = [
   { id: 'c01', name: 'Toxina botulínica', category: 'Procedimento', price: 2800, durationMin: 30, maintenanceDays: 120 },
@@ -532,6 +570,7 @@ async function seedAppointments() {
       procedure: a.procedure,
       room: a.room,
       status: 'Agendado',
+      createdAt: Timestamp.fromMillis(now.getTime() - (a.patientId === 'p2' && a.day === 1 ? 5 : 30) * 86_400_000),
       _seed: true
     })
   })
@@ -605,6 +644,48 @@ async function seedSales() {
   await batch.commit()
 }
 
+async function seedCareAndMarketing() {
+  const batch = db.batch()
+  const person = (pid) => PATIENTS.find((p) => p.id === pid)
+  for (const { id, completedDaysAgo, ...t } of CARE_TASKS) {
+    const p = person(t.patientId)
+    batch.set(db.doc(`careTasks/${id}`), {
+      status: 'Pendente',
+      source: 'procedimento',
+      notes: '',
+      outcome: null,
+      procedureName: null,
+      postCare: '',
+      ...t,
+      patientName: p.name,
+      phone: p.phone,
+      completedAt: completedDaysAgo != null ? hoursAgo(24 * completedDaysAgo) : null,
+      completedByName: completedDaysAgo != null ? 'Dra. Bárbara' : null,
+      createdAt: hoursAgo(24 * 40)
+    })
+  }
+  for (const { id, sentDaysAgo, recipients, ...c } of CAMPAIGNS) {
+    batch.set(db.doc(`campaigns/${id}`), {
+      ...c,
+      channel: 'whatsapp',
+      recipients: recipients.map((r, idx) => {
+        const p = person(r.id)
+        return {
+          ...r,
+          name: p.name,
+          phone: p.phone,
+          vars: { ultima_visita: '' },
+          sentAt: r.status === 'enviado' ? hoursAgo(24 * sentDaysAgo - idx) : null
+        }
+      }),
+      createdBy: 'u-admin',
+      createdAt: hoursAgo(24 * sentDaysAgo + 1),
+      startedAt: hoursAgo(24 * sentDaysAgo + 1)
+    })
+  }
+  await batch.commit()
+}
+
 async function seedFinance() {
   const items = buildTransactions()
   for (let i = 0; i < items.length; i += 400) {
@@ -637,7 +718,7 @@ async function seedNotifications() {
 
 async function main() {
   console.log(`Populando emuladores (projeto ${PROJECT_ID})...`)
-  for (const c of ['users', 'patients', 'appointments', 'leads', 'payments', 'commissions', 'transactions', 'settings', 'catalog', 'quotes']) {
+  for (const c of ['users', 'patients', 'appointments', 'leads', 'payments', 'commissions', 'transactions', 'settings', 'catalog', 'quotes', 'careTasks', 'campaigns', 'automationRuns']) {
     await clearCollection(c)
   }
   await seedUsers()
@@ -647,6 +728,7 @@ async function main() {
   await seedActivities()
   await seedFinance()
   await seedSales()
+  await seedCareAndMarketing()
   await seedNotifications()
   console.log('Pronto. Login: admin@afrodite.com / 123456')
 }

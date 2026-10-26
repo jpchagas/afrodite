@@ -7,7 +7,7 @@ import { maskCpf, maskPhone } from '../../../utils/format.js'
 import BottomSheet from '../../../components/BottomSheet.jsx'
 import DuplicateWarning from '../../../components/DuplicateWarning.jsx'
 
-const EMPTY = { name: '', phone: '', email: '', cpf: '', age: '' }
+const EMPTY = { name: '', phone: '', email: '', cpf: '', age: '', birthDate: '' }
 
 export default function NewPatientSheet({ open, onClose, onCreated }) {
   const toast = useToast()
@@ -78,8 +78,16 @@ export default function NewPatientSheet({ open, onClose, onCreated }) {
           required
         />
         <TextField label="E-mail (opcional)" type="email" value={form.email} onChange={set('email')} inputMode="email" />
+        <TextField label="CPF" value={form.cpf} onChange={set('cpf', maskCpf)} inputMode="numeric" />
         <Stack direction="row" spacing={1.5}>
-          <TextField label="CPF" value={form.cpf} onChange={set('cpf', maskCpf)} inputMode="numeric" sx={{ flex: 2 }} />
+          <TextField
+            label="Nascimento"
+            type="date"
+            value={form.birthDate}
+            onChange={(e) => setForm((p) => ({ ...p, birthDate: e.target.value }))}
+            InputLabelProps={{ shrink: true }}
+            sx={{ flex: 1.6 }}
+          />
           <TextField
             label="Idade"
             value={form.age}

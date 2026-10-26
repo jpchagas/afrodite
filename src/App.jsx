@@ -24,6 +24,9 @@ import WhatsAppScreen from './screens/leads/WhatsAppScreen.jsx'
 import NotificationsScreen from './screens/NotificationsScreen.jsx'
 import SalesScreen from './screens/sales/SalesScreen.jsx'
 import QuoteDetailScreen from './screens/sales/QuoteDetailScreen.jsx'
+import CareScreen from './screens/care/CareScreen.jsx'
+import MarketingScreen from './screens/marketing/MarketingScreen.jsx'
+import CampaignDetailScreen from './screens/marketing/CampaignDetailScreen.jsx'
 
 // Telas que exigem login
 const PRIVATE_ROUTES = [
@@ -42,7 +45,10 @@ const PRIVATE_ROUTES = [
   ['/financeiro', FinanceiroScreen],
   ['/notificacoes', NotificationsScreen],
   ['/vendas', SalesScreen],
-  ['/vendas/orcamentos/:id', QuoteDetailScreen]
+  ['/vendas/orcamentos/:id', QuoteDetailScreen],
+  ['/cuidados', CareScreen],
+  ['/marketing', MarketingScreen],
+  ['/marketing/campanhas/:id', CampaignDetailScreen]
 ]
 
 // Remonta a tela quando o :id da URL muda (ex.: de um lead para outro pela

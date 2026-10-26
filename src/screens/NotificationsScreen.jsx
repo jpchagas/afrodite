@@ -8,6 +8,7 @@ import ChatRoundedIcon from '@mui/icons-material/ChatRounded'
 import EventAvailableRoundedIcon from '@mui/icons-material/EventAvailableRounded'
 import AlarmRoundedIcon from '@mui/icons-material/AlarmRounded'
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded'
+import VolunteerActivismRoundedIcon from '@mui/icons-material/VolunteerActivismRounded'
 import { brand } from '../theme/theme.js'
 import * as afroditeApi from '../services/afroditeApi.js'
 import { useNotifications } from '../context/NotificationsContext.jsx'
@@ -24,7 +25,8 @@ const TYPE_ICON = {
   mensagem: <ChatRoundedIcon />,
   agendamento: <EventAvailableRoundedIcon />,
   lembrete: <AlarmRoundedIcon />,
-  followup: <ScheduleRoundedIcon />
+  followup: <ScheduleRoundedIcon />,
+  cuidado: <VolunteerActivismRoundedIcon />
 }
 
 function TypeIcon({ type, unread }) {
